@@ -2596,9 +2596,26 @@ impl Frame {
 
     /// Element boxes from the root down to the topmost box under (x, y).
     pub(crate) fn hit_path(&self, x: f32, y: f32, styles: &StyleStore) -> Vec<usize> {
+        self.hit_path_except(x, y, styles, None)
+    }
+
+    /// [`Self::hit_path`] as if node `skip` and its subtree were not there.
+    pub(crate) fn hit_path_except(&self, x: f32, y: f32, styles: &StyleStore, skip: Option<usize>) -> Vec<usize> {
+        let inside = |mut i: usize, s: usize| loop {
+            if i == s {
+                return true;
+            }
+            match self.nodes[i].parent {
+                Some(p) => i = p,
+                None => return false,
+            }
+        };
         let mut best: Option<(i32, usize)> = None;
         for (i, n) in self.nodes.iter().enumerate() {
             if !n.visible || n.taffy.is_none() || !styles[n.style].pointer_events {
+                continue;
+            }
+            if skip.is_some_and(|s| inside(n.owner, s)) {
                 continue;
             }
             if n.clip.is_some_and(|c| !c.contains(x, y)) || !n.bounds.contains(x, y) {

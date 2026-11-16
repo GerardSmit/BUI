@@ -926,3 +926,62 @@ fn a_paste_takes_the_clipboard_as_it_is_now() {
         set_headless_clipboard(None);
     });
 }
+
+/// A full-window backdrop over a target, its mouse-down listener passing presses through
+/// (`Window::pass_through`) while `pass` holds.
+struct Backdrop {
+    pass: std::rc::Rc<std::cell::Cell<bool>>,
+    heard: std::rc::Rc<std::cell::RefCell<Vec<&'static str>>>,
+}
+
+impl Render for Backdrop {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let (h1, h2, h3, h4, h5) = (self.heard.clone(), self.heard.clone(), self.heard.clone(), self.heard.clone(), self.heard.clone());
+        let pass = self.pass.clone();
+        body()
+            .m_0()
+            .child(
+                div().id("target").w(px(100.0)).h(px(50.0))
+                    .on_mouse_down(MouseButton::Right, move |_, _, _| h1.borrow_mut().push("target right"))
+                    .on_mouse_down(MouseButton::Left, move |_, _, _| h2.borrow_mut().push("target down"))
+                    .on_click(move |_, _, _| h3.borrow_mut().push("target click")),
+            )
+            .child(
+                div().id("backdrop").css("position", "absolute").css("left", "0px").css("top", "0px")
+                    .w(px(200.0)).h(px(100.0)).css("z-index", "4")
+                    .on_any_mouse_down(move |_, w, _| {
+                        h4.borrow_mut().push("backdrop down");
+                        if pass.get() {
+                            w.pass_through();
+                        }
+                    })
+                    .on_click(move |_, _, _| h5.borrow_mut().push("backdrop click")),
+            )
+    }
+}
+
+#[test]
+fn a_backdrop_can_pass_a_press_through_to_what_lies_under_it() {
+    Application::headless().run(|cx| {
+        let pass = std::rc::Rc::new(std::cell::Cell::new(false));
+        let heard = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let win = open(cx, 200.0, 100.0, Backdrop { pass: pass.clone(), heard: heard.clone() });
+        let id = win.id;
+        cx.draw(id);
+        let take = |h: &std::rc::Rc<std::cell::RefCell<Vec<&'static str>>>| std::mem::take(&mut *h.borrow_mut());
+        // not passed: the backdrop takes the press and the click
+        cx.simulate_right(id, 20.0, 20.0, true);
+        cx.simulate_right(id, 20.0, 20.0, false);
+        cx.simulate_click(id, 20.0, 20.0);
+        assert_eq!(take(&heard), ["backdrop down", "backdrop down", "backdrop click"]);
+        // passed: the backdrop hears the press, then the target the press and its click
+        pass.set(true);
+        cx.simulate_right(id, 20.0, 20.0, true);
+        cx.simulate_right(id, 20.0, 20.0, false);
+        cx.simulate_click(id, 20.0, 20.0);
+        assert_eq!(take(&heard), ["backdrop down", "target right", "backdrop down", "target down", "target click"]);
+        // passed where nothing is under it: the press goes nowhere else
+        cx.simulate_click(id, 150.0, 80.0);
+        assert_eq!(take(&heard), ["backdrop down"]);
+    });
+}

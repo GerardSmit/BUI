@@ -752,6 +752,15 @@ impl App {
         });
     }
 
+    /// Press (`down`) or release the right button at (x, y), as a host does (the pointer
+    /// moves there first).
+    pub fn simulate_right(&mut self, window: WindowId, x: f32, y: f32, down: bool) {
+        self.simulate_mouse_move(window, x, y);
+        self.input(window, |ctx, s| unsafe {
+            sys::BK_button(ctx, (x * s) as c_int, (y * s) as c_int, 3, c_int::from(!down), 0);
+        });
+    }
+
     /// Press (`down`) or release the middle button at (x, y), as a host does (the pointer
     /// moves there first).
     pub fn simulate_middle(&mut self, window: WindowId, x: f32, y: f32, down: bool) {
@@ -1080,6 +1089,12 @@ pub struct Window {
     autoscroll: Option<crate::autoscroll::Autoscroll>,
     /// A press that ended an autoscroll: its release is eaten too.
     eat_release: Option<MouseButton>,
+    /// The element whose listener is running (`emit`), for [`Window::pass_through`].
+    emitting: Option<Key>,
+    /// The element a mouse-down listener asked to pass the press through.
+    pass: Option<Key>,
+    /// The element the current press went through: its release goes through it too.
+    passed: Option<Key>,
     /// Something scrolled since this was last cleared (an autoscroll step's check).
     scrolled: bool,
     /// Elements this pass rendered by where they were last laid out
@@ -1157,6 +1172,9 @@ impl Window {
                 tips: crate::tooltip::Tips::default(),
                 autoscroll: None,
                 eat_release: None,
+                emitting: None,
+                pass: None,
+                passed: None,
                 scrolled: false,
                 sized_by: Vec::new(),
                 own_titlebar: false,
@@ -1291,6 +1309,15 @@ impl Window {
 
     pub fn refresh(&mut self) {
         self.dirty = true;
+    }
+
+    /// From a mouse-down listener: once this press has been handled, hand it on to what lies
+    /// under the listening element (as if that element and what it holds were not there), and
+    /// its release and click too. For a menu's backdrop: a press outside the menu closes it and
+    /// still reaches what was pressed, so a right click on another tab opens that tab's menu in
+    /// the same click. Elsewhere it does nothing.
+    pub fn pass_through(&mut self) {
+        self.pass = self.emitting;
     }
 
     /// Content size in logical pixels.
@@ -1829,6 +1856,13 @@ impl Window {
         f.hit_path(x, y, &self.caches.styles).into_iter().map(|i| f.nodes[i].key).collect()
     }
 
+    /// [`Self::path_at`] as if element `skip` (and what it holds) were not there.
+    fn path_under(&self, x: f32, y: f32, skip: Key) -> Vec<Key> {
+        let Some(f) = &self.frame else { return Vec::new() };
+        let skip = f.by_key().get(&skip).copied();
+        f.hit_path_except(x, y, &self.caches.styles, skip).into_iter().map(|i| f.nodes[i].key).collect()
+    }
+
     /// Call the listeners `pick` selects, from element `key` up to the root.
     /// The frame is moved out of the window meanwhile, so listeners can take
     /// `&mut Window` while the frame lends them out: no copies, no `Rc`.
@@ -1843,7 +1877,9 @@ impl Window {
             if let Some(ls) = frame.el(i).and_then(|e| e.listeners.as_deref()) {
                 for l in pick(ls) {
                     heard = true;
+                    self.emitting = Some(frame.nodes[i].key);
                     l(e, self, app);
+                    self.emitting = None;
                     if !app.propagate {
                         break 'up;
                     }
@@ -2016,9 +2052,24 @@ impl Window {
                 let clicks = ev.text.split_whitespace().nth(2).and_then(|c| c.parse().ok());
                 let click_count = clicks.unwrap_or(if ev.kind == sys::BK_EV_DOUBLE { 2 } else { 1 });
                 let e = MouseDownEvent { button, position: point(px(x), px(y)), modifiers, click_count };
+                self.pass = None;
+                self.passed = None;
                 if let Some(&deepest) = path.last() {
                     self.emit(app, deepest, &e, |l| l.mouse_down.iter()
                         .filter(|(b, _)| b.is_none_or(|b| b == button)).map(|(_, f)| f).collect());
+                }
+                // a listener passed it on (`pass_through`): to what lies under its element
+                if let Some(skip) = self.pass.take() {
+                    let path = self.path_under(x, y, skip);
+                    self.state.active = path.iter().copied().collect();
+                    self.set_focus(&path);
+                    self.pressed = path.clone();
+                    self.passed = Some(skip);
+                    if let Some(&deepest) = path.last() {
+                        self.emit(app, deepest, &e, |l| l.mouse_down.iter()
+                            .filter(|(b, _)| b.is_none_or(|b| b == button)).map(|(_, f)| f).collect());
+                    }
+                    self.pass = None;
                 }
             }
             sys::BK_EV_RELEASE => {
@@ -2045,7 +2096,11 @@ impl Window {
                     self.hover_bars();
                     return;
                 }
-                let path = self.path_at(x, y);
+                // (a press passed through: its release too, the element maybe gone by now)
+                let path = match self.passed.take() {
+                    Some(skip) => self.path_under(x, y, skip),
+                    None => self.path_at(x, y),
+                };
                 let up = MouseUpEvent { button, position: point(px(x), px(y)), modifiers };
                 if let Some(&deepest) = path.last() {
                     self.emit(app, deepest, &up, |l| l.mouse_up.iter()
