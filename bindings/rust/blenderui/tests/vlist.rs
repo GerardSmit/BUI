@@ -270,3 +270,23 @@ fn autoscroll_stops_cleanly_at_the_end_and_asks_for_no_frames() {
         cx.simulate_middle(id, 300.0, 390.0, false);
     });
 }
+
+/// Shift + wheel (and a sideways swipe, which the kit sends as one) goes sideways: the list,
+/// which has no sideways scroll, stays where it is, and its parents' listeners hear it.
+#[test]
+fn shift_and_the_wheel_leave_the_list_where_it_is() {
+    run("dark", |cx| {
+        let (id, chat) = open(cx, 5_000);
+        frame(cx, id);
+        let before = offset(cx, &chat);
+        let shift = Modifiers { shift: true, ..Modifiers::default() };
+        cx.simulate_scroll_mods(id, 300.0, 200.0, 5, shift);
+        frames(cx, id, 30);
+        assert_eq!(offset(cx, &chat), before, "Shift + wheel left the list alone");
+        assert!(chat.read(cx).view.at_bottom());
+        // the plain wheel still scrolls it
+        cx.simulate_scroll(id, 300.0, 200.0, 5);
+        frames(cx, id, 30);
+        assert_ne!(offset(cx, &chat), before);
+    });
+}

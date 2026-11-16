@@ -113,6 +113,12 @@ impl<S: ItemSource, P: Measurer + ItemPainter> IntoElement for VariableList<S, P
                 })
                 .on_mouse_up(MouseButton::Left, move |_, _, cx| up.update(cx, |s, _| s.pointer_up()))
                 .on_scroll_wheel(move |e, w, cx| {
+                    // Shift + wheel and a sideways swipe go sideways: a list has no sideways
+                    // scroll of its own, so it leaves them to what is under the pointer (a
+                    // row's own sideways scroll, the list's parents' listeners)
+                    if e.modifiers.shift {
+                        return;
+                    }
                     let (key, moved) = wh.update(cx, |s, _| {
                         // Blender's wheel scrolls at once, a notch or a touchpad fraction alike: no easing
                         let lines = f64::from(e.delta);
