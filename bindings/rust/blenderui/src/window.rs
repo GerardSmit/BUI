@@ -2045,6 +2045,8 @@ impl Window {
         self.hover_tooltip(&path);
         let now: std::collections::HashSet<Key> = path.iter().copied().collect();
         if now == self.state.hovered {
+            // the same elements, maybe restyled since: a cursor set by the last render shows
+            self.refresh_cursor(&path);
             return;
         }
         let entered: Vec<Key> = now.difference(&self.state.hovered).copied().collect();
