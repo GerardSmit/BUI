@@ -721,8 +721,37 @@ static void run_repeat(void)
   }
 }
 
+/* A mouse or keyboard unplugged (the seat has none left): its object is inert from now on, so
+ * a later one gets a new object. */
+static void seat_lost(uint32_t caps)
+{
+  if (!(caps & WL_SEAT_CAPABILITY_POINTER) && g.pointer) {
+    if (wl_proxy_get_version((struct wl_proxy *)g.pointer) >= WL_POINTER_RELEASE_SINCE_VERSION) {
+      wl_pointer_release(g.pointer);
+    }
+    else {
+      wl_pointer_destroy(g.pointer);
+    }
+    g.pointer = NULL;
+    g.pointer_win = NULL;
+    g.buttons = 0;
+  }
+  if (!(caps & WL_SEAT_CAPABILITY_KEYBOARD) && g.keyboard) {
+    if (wl_proxy_get_version((struct wl_proxy *)g.keyboard) >= WL_KEYBOARD_RELEASE_SINCE_VERSION) {
+      wl_keyboard_release(g.keyboard);
+    }
+    else {
+      wl_keyboard_destroy(g.keyboard);
+    }
+    g.keyboard = NULL;
+    g.keyboard_win = NULL;
+    g.repeat_key = 0;
+  }
+}
+
 static void seat_capabilities(void *d, struct wl_seat *seat, uint32_t caps)
 {
+  seat_lost(caps);
   if ((caps & WL_SEAT_CAPABILITY_POINTER) && !g.pointer) {
     g.pointer = wl_seat_get_pointer(seat);
     wl_pointer_add_listener(g.pointer, &pointer_listener, NULL);
@@ -1080,7 +1109,14 @@ int bk_wl_window_start_drag(BKWindow *win, const BKDragOffer *offers, int count,
     if (scale > 1) {
       wl_surface_set_buffer_scale(g_drag.icon, scale);
     }
-    wl_surface_attach(g_drag.icon, g_drag.icon_buffer, -icon_w / scale / 2, -icon_h / scale / 2);
+    const int dx = -icon_w / scale / 2, dy = -icon_h / scale / 2;
+    if (g.compositor_version >= WL_SURFACE_OFFSET_SINCE_VERSION) {
+      wl_surface_offset(g_drag.icon, dx, dy);
+      wl_surface_attach(g_drag.icon, g_drag.icon_buffer, 0, 0);
+    }
+    else {
+      wl_surface_attach(g_drag.icon, g_drag.icon_buffer, dx, dy);
+    }
     wl_surface_damage(g_drag.icon, 0, 0, icon_w, icon_h);
     wl_surface_commit(g_drag.icon);
   }
