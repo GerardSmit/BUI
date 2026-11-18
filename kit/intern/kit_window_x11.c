@@ -878,6 +878,19 @@ int BK_window_focused(BKWindow *win)
   return win->xid && win->focused;
 }
 
+/* Drags out of the window: not on this host yet. */
+int BK_window_start_drag(BKWindow *win, const BKDragOffer *offers, int count, const uint32_t *icon,
+                         int icon_w, int icon_h)
+{
+  (void)win;
+  (void)offers;
+  (void)count;
+  (void)icon;
+  (void)icon_w;
+  (void)icon_h;
+  return 0;
+}
+
 /* EWMH activation: _NET_ACTIVE_WINDOW from a pager (source 2), which window managers honour
  * without focus-stealing prevention, plus the "lift" and "focus" requests for those without
  * EWMH. The token goes to _NET_STARTUP_ID first, as startup notification hands it over. */

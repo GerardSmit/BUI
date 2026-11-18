@@ -163,6 +163,7 @@ static struct {
   int cursor_scale;
   uint32_t serial; /* the last input serial (clipboard ownership needs one) */
   uint32_t pointer_serial;
+  uint32_t press_serial; /* the left button's press (a drag starts from it) */
   BKWindow *pointer_win, *keyboard_win;
   double px, py;  /* pointer position in raster pixels */
   int buttons;    /* BK_BUTTON1 while the left button is down */
@@ -180,6 +181,30 @@ static int (*g_stop)(void) = NULL;
 static void (*g_wake_cb)(void) = NULL;
 static int g_wake_pipe[2] = {-1, -1};
 static char *g_clip_text = NULL; /* what we own on the clipboard */
+static uint32_t g_data_manager_version = 1;
+static bool g_pending_uri = false; /* the newest offer has text/uri-list */
+
+typedef struct {
+  char *mime;
+  unsigned char *data;
+  size_t size;
+} DragOffer;
+
+static struct {
+  struct wl_data_source *source;
+  struct wl_surface *icon;
+  struct wl_buffer *icon_buffer;
+  DragOffer *offers;
+  int n;
+  BKWindow *win;
+} g_drag;
+
+static struct {
+  struct wl_data_offer *offer; /* a drag over one of our windows */
+  BKWindow *win;
+  bool uri;
+  double x, y;
+} g_dnd;
 
 static double now_ms(void)
 {
@@ -543,6 +568,7 @@ static void pointer_button(void *d, struct wl_pointer *p, uint32_t serial, uint3
   if (button == EVDEV_BTN_LEFT) {
     if (down) {
       g.buttons = BK_BUTTON1;
+      g.press_serial = serial;
       BK_press(win->ctx, x, y, mods_now());
     }
     else {
@@ -726,15 +752,29 @@ static void offer_mime(void *d, struct wl_data_offer *offer, const char *mime)
   }
 }
 
-static struct wl_data_offer_listener offer_listener = {.offer = offer_mime};
+static void offer_mime_dnd(void *d, struct wl_data_offer *offer, const char *mime)
+{
+  if (offer == g.pending_offer && !strcmp(mime, "text/uri-list")) {
+    g_pending_uri = true;
+  }
+  offer_mime(d, offer, mime);
+}
+
+static void offer_source_actions(void *d, struct wl_data_offer *offer, uint32_t actions) {}
+
+static void offer_action(void *d, struct wl_data_offer *offer, uint32_t action) {}
+
+static struct wl_data_offer_listener offer_listener = {
+    .offer = offer_mime_dnd, .source_actions = offer_source_actions, .action = offer_action};
 
 static void device_data_offer(void *d, struct wl_data_device *dev, struct wl_data_offer *offer)
 {
-  if (g.pending_offer && g.pending_offer != g.offer) {
+  if (g.pending_offer && g.pending_offer != g.offer && g.pending_offer != g_dnd.offer) {
     wl_data_offer_destroy(g.pending_offer);
   }
   g.pending_offer = offer;
   g.offer_mime = NULL;
+  g_pending_uri = false;
   wl_data_offer_add_listener(offer, &offer_listener, NULL);
 }
 
@@ -750,8 +790,88 @@ static void device_selection(void *d, struct wl_data_device *dev, struct wl_data
   }
 }
 
-static struct wl_data_device_listener device_listener = {
-    .data_offer = device_data_offer, .selection = device_selection};
+static void dnd_forget(void)
+{
+  if (g_dnd.offer) {
+    if (g_dnd.offer == g.pending_offer) {
+      g.pending_offer = NULL;
+    }
+    wl_data_offer_destroy(g_dnd.offer);
+  }
+  memset(&g_dnd, 0, sizeof(g_dnd));
+}
+
+static void device_enter(void *d, struct wl_data_device *dev, uint32_t serial,
+                         struct wl_surface *surface, wl_fixed_t x, wl_fixed_t y,
+                         struct wl_data_offer *offer)
+{
+  dnd_forget();
+  if (!offer) {
+    return;
+  }
+  BKWindow *win = find_window(surface);
+  g_dnd.offer = offer;
+  g_dnd.win = win;
+  g_dnd.uri = offer == g.pending_offer && g_pending_uri && win && win->cb.on_drop;
+  if (offer == g.pending_offer) {
+    g.pending_offer = NULL;
+  }
+  if (win) {
+    g_dnd.x = wl_fixed_to_double(x) * win->bscale;
+    g_dnd.y = wl_fixed_to_double(y) * win->bscale;
+  }
+  wl_data_offer_accept(offer, serial, g_dnd.uri ? "text/uri-list" : NULL);
+  if (g_data_manager_version >= 3) {
+    const uint32_t copy = WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY;
+    wl_data_offer_set_actions(offer, g_dnd.uri ? copy : WL_DATA_DEVICE_MANAGER_DND_ACTION_NONE,
+                              g_dnd.uri ? copy : WL_DATA_DEVICE_MANAGER_DND_ACTION_NONE);
+  }
+}
+
+static void device_leave(void *d, struct wl_data_device *dev)
+{
+  dnd_forget();
+}
+
+static void device_motion(void *d, struct wl_data_device *dev, uint32_t time, wl_fixed_t x,
+                          wl_fixed_t y)
+{
+  if (g_dnd.win) {
+    g_dnd.x = wl_fixed_to_double(x) * g_dnd.win->bscale;
+    g_dnd.y = wl_fixed_to_double(y) * g_dnd.win->bscale;
+  }
+}
+
+static char *receive_offer(struct wl_data_offer *offer, const char *mime, double wait_ms);
+static char *drag_offer_text(const char *mime);
+
+static void device_drop(void *d, struct wl_data_device *dev)
+{
+  BKWindow *win = g_dnd.win;
+  if (g_dnd.offer && g_dnd.uri && win && win->cb.on_drop) {
+    /* a drag of our own: its bytes are here (reading the pipe would wait on ourselves) */
+    char *text = g_drag.source ? drag_offer_text("text/uri-list") :
+                                 receive_offer(g_dnd.offer, "text/uri-list", 2000.0);
+    if (g_data_manager_version >= 3) {
+      wl_data_offer_finish(g_dnd.offer);
+    }
+    const int x = (int)g_dnd.x, y = (int)g_dnd.y;
+    dnd_forget();
+    if (text) {
+      win->cb.on_drop(win->cb.data, win, x, y, text);
+      free(text);
+    }
+    return;
+  }
+  dnd_forget();
+}
+
+static struct wl_data_device_listener device_listener = {.data_offer = device_data_offer,
+                                                         .enter = device_enter,
+                                                         .leave = device_leave,
+                                                         .motion = device_motion,
+                                                         .drop = device_drop,
+                                                         .selection = device_selection};
 
 static void source_send(void *d, struct wl_data_source *src, const char *mime, int32_t fd)
 {
@@ -778,8 +898,196 @@ static void source_cancelled(void *d, struct wl_data_source *src)
   wl_data_source_destroy(src);
 }
 
-static struct wl_data_source_listener source_listener = {.send = source_send,
-                                                               .cancelled = source_cancelled};
+static void source_target(void *d, struct wl_data_source *src, const char *mime) {}
+
+static void source_dnd_performed(void *d, struct wl_data_source *src) {}
+
+static void source_dnd_finished(void *d, struct wl_data_source *src) {}
+
+static void source_action(void *d, struct wl_data_source *src, uint32_t action) {}
+
+static struct wl_data_source_listener source_listener = {.target = source_target,
+                                                         .send = source_send,
+                                                         .cancelled = source_cancelled,
+                                                         .dnd_drop_performed = source_dnd_performed,
+                                                         .dnd_finished = source_dnd_finished,
+                                                         .action = source_action};
+
+/* -- drags out of the window -- */
+
+static char *drag_offer_text(const char *mime)
+{
+  for (int i = 0; i < g_drag.n; i++) {
+    if (!strcmp(g_drag.offers[i].mime, mime)) {
+      char *out = (char *)malloc(g_drag.offers[i].size + 1);
+      if (out) {
+        memcpy(out, g_drag.offers[i].data, g_drag.offers[i].size);
+        out[g_drag.offers[i].size] = '\0';
+      }
+      return out;
+    }
+  }
+  return NULL;
+}
+
+static void write_all(int fd, const unsigned char *p, size_t left)
+{
+  const double until = now_ms() + 5000.0;
+  while (left > 0) {
+    const ssize_t n = write(fd, p, left);
+    if (n > 0) {
+      p += n;
+      left -= (size_t)n;
+      continue;
+    }
+    if (n < 0 && errno == EINTR) {
+      continue;
+    }
+    const double wait = until - now_ms();
+    struct pollfd pfd = {fd, POLLOUT, 0};
+    if (n < 0 && errno == EAGAIN && wait > 0 && poll(&pfd, 1, (int)wait) > 0) {
+      continue;
+    }
+    break;
+  }
+}
+
+static void drag_send(void *d, struct wl_data_source *src, const char *mime, int32_t fd)
+{
+  fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+  for (int i = 0; i < g_drag.n; i++) {
+    if (!strcmp(g_drag.offers[i].mime, mime)) {
+      write_all(fd, g_drag.offers[i].data, g_drag.offers[i].size);
+      break;
+    }
+  }
+  close(fd);
+}
+
+static void drag_end(struct wl_data_source *src)
+{
+  if (src != g_drag.source) {
+    wl_data_source_destroy(src);
+    return;
+  }
+  BKWindow *win = g_drag.win;
+  wl_data_source_destroy(src);
+  if (g_drag.icon) {
+    wl_surface_destroy(g_drag.icon);
+  }
+  if (g_drag.icon_buffer) {
+    wl_buffer_destroy(g_drag.icon_buffer);
+  }
+  for (int i = 0; i < g_drag.n; i++) {
+    free(g_drag.offers[i].mime);
+    free(g_drag.offers[i].data);
+  }
+  free(g_drag.offers);
+  memset(&g_drag, 0, sizeof(g_drag));
+  if (win && win->ctx) { /* the press the drag took: let it go where it began */
+    BK_release(win->ctx, (int)g.px, (int)g.py, mods_now());
+    win->render_pending = 1;
+  }
+}
+
+static void drag_cancelled(void *d, struct wl_data_source *src)
+{
+  drag_end(src);
+}
+
+static void drag_finished(void *d, struct wl_data_source *src)
+{
+  drag_end(src);
+}
+
+static void drag_performed(void *d, struct wl_data_source *src) {}
+
+static struct wl_data_source_listener drag_listener = {.target = source_target,
+                                                       .send = drag_send,
+                                                       .cancelled = drag_cancelled,
+                                                       .dnd_drop_performed = drag_performed,
+                                                       .dnd_finished = drag_finished,
+                                                       .action = source_action};
+
+static struct wl_buffer *icon_buffer(const uint32_t *icon, int w, int h)
+{
+  const size_t size = (size_t)w * (size_t)h * 4;
+  const int fd = memfd_create("bui-drag-icon", MFD_CLOEXEC);
+  if (fd < 0 || ftruncate(fd, (off_t)size) < 0) {
+    if (fd >= 0) {
+      close(fd);
+    }
+    return NULL;
+  }
+  void *data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  if (data == MAP_FAILED) {
+    close(fd);
+    return NULL;
+  }
+  memcpy(data, icon, size);
+  munmap(data, size);
+  struct wl_shm_pool *pool = wl_shm_create_pool(g.shm, fd, (int32_t)size);
+  struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, 0, w, h, w * 4,
+                                                       WL_SHM_FORMAT_ARGB8888);
+  wl_shm_pool_destroy(pool);
+  close(fd);
+  return buffer;
+}
+
+int bk_wl_window_start_drag(BKWindow *win, const BKDragOffer *offers, int count,
+                            const uint32_t *icon, int icon_w, int icon_h)
+{
+  if (!win || !win->surface || !g.data_manager || !g.data_device || count <= 0 || !offers ||
+      g_drag.source || !(g.buttons & BK_BUTTON1) || g.pointer_win != win ||
+      g_data_manager_version < 3)
+  {
+    return 0;
+  }
+  g_drag.offers = (DragOffer *)calloc((size_t)count, sizeof(DragOffer));
+  if (!g_drag.offers) {
+    return 0;
+  }
+  struct wl_data_source *src = wl_data_device_manager_create_data_source(g.data_manager);
+  for (int i = 0; i < count; i++) {
+    DragOffer *o = &g_drag.offers[g_drag.n];
+    o->mime = strdup(offers[i].mime ? offers[i].mime : "");
+    o->data = (unsigned char *)malloc(offers[i].size ? offers[i].size : 1);
+    if (!o->mime || !o->data) {
+      free(o->mime);
+      free(o->data);
+      continue;
+    }
+    if (offers[i].size) {
+      memcpy(o->data, offers[i].data, offers[i].size);
+    }
+    o->size = offers[i].size;
+    g_drag.n++;
+    wl_data_source_offer(src, o->mime);
+  }
+  wl_data_source_set_actions(src, WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY);
+  g_drag.source = src;
+  g_drag.win = win;
+  wl_data_source_add_listener(src, &drag_listener, NULL);
+  if (icon && icon_w > 0 && icon_h > 0) {
+    g_drag.icon_buffer = icon_buffer(icon, icon_w, icon_h);
+    if (g_drag.icon_buffer) {
+      g_drag.icon = wl_compositor_create_surface(g.compositor);
+    }
+  }
+  wl_data_device_start_drag(g.data_device, src, win->surface, g_drag.icon, g.press_serial);
+  if (g_drag.icon) {
+    const int scale = g.compositor_version >= 3 ? BK_MAX(1, win->bscale) : 1;
+    if (scale > 1) {
+      wl_surface_set_buffer_scale(g_drag.icon, scale);
+    }
+    wl_surface_attach(g_drag.icon, g_drag.icon_buffer, -icon_w / scale / 2, -icon_h / scale / 2);
+    wl_surface_damage(g_drag.icon, 0, 0, icon_w, icon_h);
+    wl_surface_commit(g_drag.icon);
+  }
+  g.buttons = 0;
+  wl_display_flush(g.display);
+  return 1;
+}
 
 static char *host_clipboard_get(void *data)
 {
@@ -793,16 +1101,21 @@ static char *host_clipboard_get(void *data)
   if (!g.offer || !g.offer_mime) {
     return NULL;
   }
+  return receive_offer(g.offer, g.offer_mime, 300.0);
+}
+
+static char *receive_offer(struct wl_data_offer *offer, const char *mime, double wait_ms)
+{
   int fds[2];
   if (pipe2(fds, O_CLOEXEC) < 0) {
     return NULL;
   }
-  wl_data_offer_receive(g.offer, g.offer_mime, fds[1]);
+  wl_data_offer_receive(offer, mime, fds[1]);
   close(fds[1]);
   wl_display_flush(g.display);
   char *out = NULL;
   size_t len = 0;
-  const double until = now_ms() + 300.0;
+  const double until = now_ms() + wait_ms;
   for (;;) {
     const double left = until - now_ms();
     struct pollfd pfd = {fds[0], POLLIN, 0};
@@ -903,7 +1216,9 @@ static void registry_global(void *d, struct wl_registry *reg, uint32_t name, con
     wl_seat_add_listener(g.seat, &seat_listener, NULL);
   }
   else if (!strcmp(iface, wl_data_device_manager_interface.name)) {
-    g.data_manager = wl_registry_bind(reg, name, &wl_data_device_manager_interface, 1);
+    g_data_manager_version = BK_MIN(version, 3u);
+    g.data_manager = wl_registry_bind(reg, name, &wl_data_device_manager_interface,
+                                      g_data_manager_version);
   }
   else if (!strcmp(iface, wl_output_interface.name) && g.noutputs < MAX_OUTPUTS) {
     Output *out = &g.outputs[g.noutputs++];
@@ -1216,6 +1531,13 @@ void bk_wl_window_free(BKWindow *win)
     return;
   }
   close_window(win);
+  if (g_drag.win == win) {
+    g_drag.win = NULL;
+  }
+  if (g_dnd.win == win) {
+    g_dnd.win = NULL;
+    g_dnd.uri = false;
+  }
   for (BKWindow **p = &g_windows; *p; p = &(*p)->next) {
     if (*p == win) {
       *p = win->next;

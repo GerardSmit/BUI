@@ -792,6 +792,13 @@ impl App {
         });
     }
 
+    /// Drop a `text/uri-list` on the window at (x, y), as another app's drag would.
+    pub fn simulate_drop(&mut self, window: WindowId, x: f32, y: f32, uri_list: &str) {
+        self.flush();
+        self.with_window(window.0, |w, app| w.dropped(app, x, y, uri_list));
+        self.flush();
+    }
+
     /// Press at `from`, drag to `to` and release there.
     pub fn simulate_drag(&mut self, window: WindowId, from: (f32, f32), to: (f32, f32)) {
         self.simulate_mouse_move(window, from.0, from.1);
@@ -956,6 +963,25 @@ unsafe extern "C" fn on_frame(data: *mut c_void, _win: *mut sys::BKWindow) {
     });
 }
 
+unsafe extern "C" fn on_drop(data: *mut c_void, _win: *mut sys::BKWindow, x: c_int, y: c_int,
+                             uri_list: *const c_char) {
+    let id = data as usize;
+    let text = if uri_list.is_null() {
+        String::new()
+    } else {
+        // SAFETY: the kit hands over a NUL-terminated string for the call.
+        unsafe { CStr::from_ptr(uri_list) }.to_string_lossy().into_owned()
+    };
+    with_running_app(|app| {
+        app.drain();
+        app.with_window(id, |w, app| {
+            let (x, y) = (x as f32 / w.scale, y as f32 / w.scale);
+            w.dropped(app, x, y, &text);
+        });
+        app.flush();
+    });
+}
+
 unsafe extern "C" fn on_close(data: *mut c_void, _win: *mut sys::BKWindow) -> c_int {
     let id = data as usize;
     with_running_app(|app| {
@@ -1040,6 +1066,30 @@ unsafe extern "C" {
 
 type ViewFn = Box<dyn Fn(&mut Window, &mut App) -> AnyElement>;
 
+/// What a drag out of the window offers ([`Window::start_drag`]): bytes under mime types
+/// (`text/uri-list`, `text/plain`, `image/png` ...), and the picture under the pointer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DragOut {
+    pub offers: Vec<(String, Vec<u8>)>,
+    pub icon: Option<DragIcon>,
+}
+
+impl DragOut {
+    /// The bytes offered under `mime`.
+    pub fn offered(&self, mime: &str) -> Option<&[u8]> {
+        self.offers.iter().find(|(m, _)| m == mime).map(|(_, b)| b.as_slice())
+    }
+}
+
+/// A drag's picture: premultiplied 0xAARRGGBB pixels, row by row, in device pixels.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DragIcon {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u32>,
+}
+
+
 /// A window (gpui's `Window`): its kit context, layout and interaction state.
 pub struct Window {
     id: usize,
@@ -1089,6 +1139,8 @@ pub struct Window {
     autoscroll: Option<crate::autoscroll::Autoscroll>,
     /// A press that ended an autoscroll: its release is eaten too.
     eat_release: Option<MouseButton>,
+    /// Drags out of a headless window ([`Window::start_drag`]), for tests.
+    drags_out: Vec<DragOut>,
     /// The element whose listener is running (`emit`), for [`Window::pass_through`].
     emitting: Option<Key>,
     /// The element a mouse-down listener asked to pass the press through.
@@ -1172,6 +1224,7 @@ impl Window {
                 tips: crate::tooltip::Tips::default(),
                 autoscroll: None,
                 eat_release: None,
+                drags_out: Vec::new(),
                 emitting: None,
                 pass: None,
                 passed: None,
@@ -1192,7 +1245,8 @@ impl Window {
                     return Err("could not create a native window".into());
                 }
                 let cb = sys::BKWindowCallbacks { data: id as *mut c_void, on_timer: Some(on_timer),
-                                                  on_close: Some(on_close), on_frame: Some(on_frame) };
+                                                  on_close: Some(on_close), on_frame: Some(on_frame),
+                                                  on_drop: Some(on_drop) };
                 sys::BK_window_set_callbacks(n, &cb);
                 win.scale = sys::BK_scale().max(0.5);
                 win.phys = ((w * win.scale).round() as i32, (h * win.scale).round() as i32);
@@ -1559,6 +1613,62 @@ impl Window {
     }
 
     /// Put `text` on the clipboard.
+    /// Start a drag out of the window with the left button held (from a mouse-move listener):
+    /// other apps can take `drag`'s offers, as a copy, and this window too through
+    /// [`Div::on_drop`](crate::Div::on_drop). The press ends here (no click follows; its
+    /// release is eaten). False when the host can't drag out (only Wayland can for now) or no
+    /// left press is on. A headless window keeps the drag for [`Window::drags_out`].
+    pub fn start_drag(&mut self, drag: DragOut) -> bool {
+        if self.pressed.is_empty() || self.press_button != MouseButton::Left || drag.offers.is_empty() {
+            return false;
+        }
+        let started = match self.native {
+            Some(n) => {
+                let mimes: Vec<CString> = drag.offers.iter()
+                    .map(|(m, _)| CString::new(m.as_str()).unwrap_or_default()).collect();
+                let offers: Vec<sys::BKDragOffer> = drag.offers.iter().zip(&mimes)
+                    .map(|((_, bytes), m)| sys::BKDragOffer { mime: m.as_ptr(), data: bytes.as_ptr().cast(),
+                                                              size: bytes.len() })
+                    .collect();
+                let (icon, w, h) = match &drag.icon {
+                    Some(i) if i.pixels.len() == i.width as usize * i.height as usize =>
+                        (i.pixels.as_ptr(), i.width as c_int, i.height as c_int),
+                    _ => (std::ptr::null(), 0, 0),
+                };
+                // SAFETY: a live native window; the kit copies the offers and the icon.
+                unsafe { sys::BK_window_start_drag(n, offers.as_ptr(), offers.len() as c_int, icon, w, h) == 1 }
+            }
+            None => {
+                self.drags_out.push(drag);
+                true
+            }
+        };
+        if started {
+            self.pressed.clear();
+            self.state.active.clear();
+            self.eat_release = Some(MouseButton::Left);
+            self.dirty = true;
+        }
+        started
+    }
+
+    /// The drags a headless window started, oldest first.
+    pub fn drags_out(&self) -> &[DragOut] {
+        &self.drags_out
+    }
+
+    fn dropped(&mut self, app: &mut App, x: f32, y: f32, uri_list: &str) {
+        let e = DropEvent::from_uri_list(point(px(x), px(y)), uri_list);
+        if e.uris.is_empty() {
+            return;
+        }
+        let path = self.path_at(x, y);
+        if let Some(&deepest) = path.last() {
+            self.emit(app, deepest, &e, |l| l.drop.iter().collect());
+        }
+        self.dirty = true;
+    }
+
     pub fn write_clipboard(&mut self, text: &str) {
         let c = CString::new(text.replace('\0', "")).unwrap_or_default();
         // SAFETY: a live context and a NUL-terminated string the kit copies.

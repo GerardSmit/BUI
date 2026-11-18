@@ -50,7 +50,11 @@
     X(void, run, (void), ()) \
     X(int, pump, (void), ()) \
     X(int, focused, (BKWindow * win), (win)) \
-    X(void, activate, (BKWindow * win, const char *token), (win, token))
+    X(void, activate, (BKWindow * win, const char *token), (win, token)) \
+    X(int, start_drag, \
+      (BKWindow * win, const BKDragOffer *offers, int count, const uint32_t *icon, int icon_w, \
+       int icon_h), \
+      (win, offers, count, icon, icon_w, icon_h))
 
 /* The per-backend prototypes (and bk_window_wake_ready). */
 #  define BK_WINDOW_DECLARE(ret, name, params, args) \
@@ -89,6 +93,7 @@ int bk_wl_window_wake_ready(void);
 #    define BK_window_wm_get bk_x11_window_wm_get
 #    define BK_window_focused bk_x11_window_focused
 #    define BK_window_activate bk_x11_window_activate
+#    define BK_window_start_drag bk_x11_window_start_drag
 #    define BK_window_run bk_x11_window_run
 #    define BK_window_pump bk_x11_window_pump
 #    define BK_window_quit bk_x11_window_quit

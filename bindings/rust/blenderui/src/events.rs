@@ -150,6 +150,80 @@ pub struct KeyUpEvent {
     pub keystroke: Keystroke,
 }
 
+/// Something dropped on an element from another app, or a drag out of the window come back:
+/// the URIs its `text/uri-list` held.
+#[derive(Clone, Debug)]
+pub struct DropEvent {
+    pub position: Point<Pixels>,
+    pub uris: Vec<String>,
+}
+
+impl DropEvent {
+    /// The URIs of a `text/uri-list` (one per line, `#` lines are comments).
+    pub fn from_uri_list(position: Point<Pixels>, text: &str) -> DropEvent {
+        let uris = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(str::to_owned).collect();
+        DropEvent { position, uris }
+    }
+
+    /// The local files among the URIs (`file://` ones, percent-decoded).
+    pub fn paths(&self) -> Vec<std::path::PathBuf> {
+        self.uris.iter().filter_map(|u| file_uri_path(u)).collect()
+    }
+}
+
+/// The path of a `file://` URI on this machine (an empty or `localhost` host), percent-decoded.
+pub fn file_uri_path(uri: &str) -> Option<std::path::PathBuf> {
+    let rest = uri.strip_prefix("file://")?;
+    let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+    if !rest.starts_with('/') {
+        return None;
+    }
+    let bytes = rest.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    path_from_bytes(out)
+}
+
+#[cfg(windows)]
+fn path_from_bytes(bytes: Vec<u8>) -> Option<std::path::PathBuf> {
+    let s = String::from_utf8(bytes).ok()?;
+    Some(std::path::PathBuf::from(s.trim_start_matches('/')))
+}
+
+#[cfg(not(windows))]
+fn path_from_bytes(bytes: Vec<u8>) -> Option<std::path::PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    Some(std::path::PathBuf::from(std::ffi::OsString::from_vec(bytes)))
+}
+
+/// A `file://` URI for a path, percent-encoding what a URI can't hold as is.
+pub fn file_uri(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy().replace('\\', "/");
+    let mut out = String::from("file://");
+    if !s.starts_with('/') {
+        out.push('/');
+    }
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"/-_.~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 /// A form control's value (`input`, `select`, `textarea` ...).
 #[derive(Clone, Debug, Default)]
 pub struct ChangeEvent {

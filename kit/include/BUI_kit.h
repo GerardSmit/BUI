@@ -688,6 +688,10 @@ typedef struct BKWindowCallbacks {
    * the first frame at a new size (BK_window_get_size has it), so a host that
    * lays out by the window's size never shows its last layout at the new one. */
   void (*on_frame)(void *data, BKWindow *win);
+  /* Something was dropped on the window from another app (or a drag of its own came back):
+   * x, y in raster pixels like pointer events, `uri_list` the text/uri-list it offered
+   * (CRLF-separated URIs, '#' lines are comments). Only offers with text/uri-list are taken. */
+  void (*on_drop)(void *data, BKWindow *win, int x, int y, const char *uri_list);
 } BKWindowCallbacks;
 int BK_window_supported(void);
 BKWindow *BK_window_new(BKContext *ctx, const char *title, int width, int height);
@@ -734,6 +738,20 @@ int BK_window_focused(BKWindow *win);
  * token, e.g. from a notification server's ActivationToken signal: Wayland can only raise a
  * window with one (xdg_activation_v1); X11 sets it as _NET_STARTUP_ID first; others ignore it. */
 void BK_window_activate(BKWindow *win, const char *token);
+/* What a drag out of the window offers: bytes under a mime type (copied by the call). */
+typedef struct BKDragOffer {
+  const char *mime;
+  const void *data;
+  size_t size;
+} BKDragOffer;
+/* Start dragging out of the window while the left button is held (call it from a motion with
+ * the button down): the system's drag takes the pointer, other apps (and this window, through
+ * on_drop) can take the offers, as a copy. `icon` (may be NULL): premultiplied ARGB8888
+ * pixels, icon_w x icon_h, shown under the pointer at its centre. The press ends here: its
+ * release reaches the context when the drag is over. Returns 1 when the drag started, 0 when
+ * the host can't (Wayland only for now; X11, Win32 and Cocoa return 0). */
+int BK_window_start_drag(BKWindow *win, const BKDragOffer *offers, int count, const uint32_t *icon,
+                         int icon_w, int icon_h);
 /* The host draws its own title bar ("titlebar" 1 below): which parts of the window are
  * the title bar's. Every point in no area is the host's own content (BK_AREA_CLIENT).
  * BK_AREA_DRAG moves the window (a double click zooms it, or what the system's setting

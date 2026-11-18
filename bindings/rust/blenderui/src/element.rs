@@ -61,6 +61,7 @@ pub(crate) struct Listeners {
     pub key_up: Vec<Listener<KeyUpEvent>>,
     pub change: Vec<Listener<ChangeEvent>>,
     pub input: Vec<Listener<ChangeEvent>>,
+    pub drop: Vec<Listener<DropEvent>>,
 }
 
 /// An element: a tag, its attributes, styles, children and listeners.
@@ -329,6 +330,13 @@ impl Div {
     pub fn on_mouse_move(mut self,
                          f: impl Fn(&MouseMoveEvent, &mut Window, &mut App) + 'static) -> Self {
         self.listeners_mut().mouse_move.push(Box::new(f));
+        self
+    }
+    /// Files (or other URIs) dropped on the element from another app, or a drag out of the
+    /// window ([`Window::start_drag`]) dropped back on it. The deepest element under the drop
+    /// with a listener hears it first, then its ancestors.
+    pub fn on_drop(mut self, f: impl Fn(&DropEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.listeners_mut().drop.push(Box::new(f));
         self
     }
     /// Called with `true` when the pointer enters, `false` when it leaves.

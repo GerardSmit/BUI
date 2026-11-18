@@ -223,6 +223,17 @@ pub struct BKWindowCallbacks {
     pub on_timer: Option<unsafe extern "C" fn(data: *mut c_void, win: *mut BKWindow, id: c_int)>,
     pub on_close: Option<unsafe extern "C" fn(data: *mut c_void, win: *mut BKWindow) -> c_int>,
     pub on_frame: Option<unsafe extern "C" fn(data: *mut c_void, win: *mut BKWindow)>,
+    pub on_drop: Option<unsafe extern "C" fn(data: *mut c_void, win: *mut BKWindow, x: c_int, y: c_int,
+                                             uri_list: *const c_char)>,
+}
+
+/// Bytes a drag out of the window offers under a mime type (`BKDragOffer`).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct BKDragOffer {
+    pub mime: *const c_char,
+    pub data: *const c_void,
+    pub size: usize,
 }
 
 /// A rectangle of a window's title bar drawn by its host (`BKWindowArea`): device px, and
@@ -414,6 +425,8 @@ unsafe extern "C" {
     /// Bring the window to the front and focus it; `token` (may be null) is an
     /// xdg-activation token (Wayland).
     pub fn BK_window_activate(win: *mut BKWindow, token: *const c_char);
+    pub fn BK_window_start_drag(win: *mut BKWindow, offers: *const BKDragOffer, count: c_int, icon: *const u32,
+                                icon_w: c_int, icon_h: c_int) -> c_int;
     /// The window's title bar areas (copied); Windows and macOS use them after the
     /// `"titlebar"` request.
     pub fn BK_window_set_areas(win: *mut BKWindow, areas: *const BKWindowArea, count: c_int);

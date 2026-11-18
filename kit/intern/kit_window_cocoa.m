@@ -1792,6 +1792,19 @@ int BK_window_focused(BKWindow *win)
   return win->nswin && [win->nswin isKeyWindow];
 }
 
+/* Drags out of the window: not on this host yet. */
+int BK_window_start_drag(BKWindow *win, const BKDragOffer *offers, int count, const uint32_t *icon,
+                         int icon_w, int icon_h)
+{
+  (void)win;
+  (void)offers;
+  (void)count;
+  (void)icon;
+  (void)icon_w;
+  (void)icon_h;
+  return 0;
+}
+
 /* The token is an xdg-activation token: macOS has no use for it. */
 void BK_window_activate(BKWindow *win, const char *token)
 {
