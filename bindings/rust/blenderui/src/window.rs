@@ -1141,6 +1141,8 @@ pub struct Window {
     eat_release: Option<MouseButton>,
     /// Drags out of a headless window ([`Window::start_drag`]), for tests.
     drags_out: Vec<DragOut>,
+    /// What [`Window::write_clipboard_offers`] last put on a headless window's clipboard.
+    clipboard_offers: Vec<(String, Vec<u8>)>,
     /// The element whose listener is running (`emit`), for [`Window::pass_through`].
     emitting: Option<Key>,
     /// The element a mouse-down listener asked to pass the press through.
@@ -1225,6 +1227,7 @@ impl Window {
                 autoscroll: None,
                 eat_release: None,
                 drags_out: Vec::new(),
+                clipboard_offers: Vec::new(),
                 emitting: None,
                 pass: None,
                 passed: None,
@@ -1650,6 +1653,39 @@ impl Window {
             self.dirty = true;
         }
         started
+    }
+
+    /// Put bytes under several mime types on the system clipboard at once (an image with its
+    /// file and its path, say). False when the host can't (only Wayland can for now); then
+    /// nothing changed and [`Window::write_clipboard`] still takes text. A headless window
+    /// keeps them for [`Window::clipboard_offers`] and puts the `text/plain` one on its
+    /// clipboard.
+    pub fn write_clipboard_offers(&mut self, offers: &[(String, Vec<u8>)]) -> bool {
+        if offers.is_empty() {
+            return false;
+        }
+        match self.native {
+            Some(n) => {
+                let mimes: Vec<CString> = offers.iter().map(|(m, _)| CString::new(m.as_str()).unwrap_or_default()).collect();
+                let raw: Vec<sys::BKDragOffer> = offers.iter().zip(&mimes)
+                    .map(|((_, bytes), m)| sys::BKDragOffer { mime: m.as_ptr(), data: bytes.as_ptr().cast(), size: bytes.len() })
+                    .collect();
+                // SAFETY: a live native window; the kit copies the offers.
+                unsafe { sys::BK_window_clipboard_offer(n, raw.as_ptr(), raw.len() as c_int) == 1 }
+            }
+            None => {
+                let text = offers.iter().find(|(m, _)| m.starts_with("text/plain"))
+                    .map(|(_, b)| String::from_utf8_lossy(b).into_owned());
+                set_headless_clipboard(text.as_deref());
+                self.clipboard_offers = offers.to_vec();
+                true
+            }
+        }
+    }
+
+    /// What [`Window::write_clipboard_offers`] last put on a headless window's clipboard.
+    pub fn clipboard_offers(&self) -> &[(String, Vec<u8>)] {
+        &self.clipboard_offers
     }
 
     /// The drags a headless window started, oldest first.

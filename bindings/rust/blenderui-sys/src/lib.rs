@@ -427,6 +427,7 @@ unsafe extern "C" {
     pub fn BK_window_activate(win: *mut BKWindow, token: *const c_char);
     pub fn BK_window_start_drag(win: *mut BKWindow, offers: *const BKDragOffer, count: c_int, icon: *const u32,
                                 icon_w: c_int, icon_h: c_int) -> c_int;
+    pub fn BK_window_clipboard_offer(win: *mut BKWindow, offers: *const BKDragOffer, count: c_int) -> c_int;
     /// The window's title bar areas (copied); Windows and macOS use them after the
     /// `"titlebar"` request.
     pub fn BK_window_set_areas(win: *mut BKWindow, areas: *const BKWindowArea, count: c_int);

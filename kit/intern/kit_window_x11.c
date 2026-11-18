@@ -878,6 +878,15 @@ int BK_window_focused(BKWindow *win)
   return win->xid && win->focused;
 }
 
+/* Clipboards with several types: not on this host yet. */
+int BK_window_clipboard_offer(BKWindow *win, const BKDragOffer *offers, int count)
+{
+  (void)win;
+  (void)offers;
+  (void)count;
+  return 0;
+}
+
 /* Drags out of the window: not on this host yet. */
 int BK_window_start_drag(BKWindow *win, const BKDragOffer *offers, int count, const uint32_t *icon,
                          int icon_w, int icon_h)

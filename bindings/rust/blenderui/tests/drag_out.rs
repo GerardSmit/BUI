@@ -126,3 +126,18 @@ fn file_uris_are_paths_and_back() {
     assert_eq!(file_uri(std::path::Path::new("/tmp/a b#1.png")), "file:///tmp/a%20b%231.png");
     assert_eq!(file_uri_path(&file_uri(std::path::Path::new("/tmp/é ü"))), Some(std::path::PathBuf::from("/tmp/é ü")));
 }
+
+#[test]
+fn a_headless_clipboard_takes_several_types_and_pastes_the_text() {
+    Application::headless().run(|cx| {
+        let log = Rc::new(RefCell::new(Log::default()));
+        let win = open(cx, 200.0, 200.0, Source { log });
+        let id = win.id;
+        cx.draw(id);
+        let offers = vec![("image/png".to_string(), b"\x89PNG".to_vec()), ("text/plain".to_string(), b"/tmp/a.png".to_vec())];
+        let took = win.update(cx, |_, w, _| w.write_clipboard_offers(&offers)).unwrap();
+        assert!(took);
+        assert_eq!(cx.window(id).unwrap().clipboard_offers(), offers.as_slice());
+        assert_eq!(headless_clipboard().as_deref(), Some("/tmp/a.png"));
+    });
+}

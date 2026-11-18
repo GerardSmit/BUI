@@ -190,6 +190,20 @@ typedef struct {
   size_t size;
 } DragOffer;
 
+static DragOffer *g_clip_offers = NULL; /* BK_window_clipboard_offer's, while ours */
+static int g_clip_n = 0;
+
+static void clip_offers_free(void)
+{
+  for (int i = 0; i < g_clip_n; i++) {
+    free(g_clip_offers[i].mime);
+    free(g_clip_offers[i].data);
+  }
+  free(g_clip_offers);
+  g_clip_offers = NULL;
+  g_clip_n = 0;
+}
+
 static struct {
   struct wl_data_source *source;
   struct wl_surface *icon;
@@ -902,9 +916,20 @@ static struct wl_data_device_listener device_listener = {.data_offer = device_da
                                                          .drop = device_drop,
                                                          .selection = device_selection};
 
+static void write_all(int fd, const unsigned char *p, size_t left);
+
 static void source_send(void *d, struct wl_data_source *src, const char *mime, int32_t fd)
 {
-  if (g_clip_text) {
+  if (g_clip_n > 0) {
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+    for (int i = 0; i < g_clip_n; i++) {
+      if (!strcmp(g_clip_offers[i].mime, mime)) {
+        write_all(fd, g_clip_offers[i].data, g_clip_offers[i].size);
+        break;
+      }
+    }
+  }
+  else if (g_clip_text) {
     const char *p = g_clip_text;
     size_t left = strlen(p);
     while (left > 0) {
@@ -923,6 +948,7 @@ static void source_cancelled(void *d, struct wl_data_source *src)
 {
   if (g.source == src) {
     g.source = NULL;
+    clip_offers_free();
   }
   wl_data_source_destroy(src);
 }
@@ -1063,6 +1089,51 @@ static struct wl_buffer *icon_buffer(const uint32_t *icon, int w, int h)
   return buffer;
 }
 
+int bk_wl_window_clipboard_offer(BKWindow *win, const BKDragOffer *offers, int count)
+{
+  if (!win || !g.data_manager || !g.data_device || count <= 0 || !offers) {
+    return 0;
+  }
+  clip_offers_free();
+  g_clip_offers = (DragOffer *)calloc((size_t)count, sizeof(DragOffer));
+  if (!g_clip_offers) {
+    return 0;
+  }
+  free(g_clip_text);
+  g_clip_text = NULL;
+  struct wl_data_source *src = wl_data_device_manager_create_data_source(g.data_manager);
+  wl_data_source_add_listener(src, &source_listener, NULL);
+  for (int i = 0; i < count; i++) {
+    DragOffer *o = &g_clip_offers[g_clip_n];
+    o->mime = strdup(offers[i].mime ? offers[i].mime : "");
+    o->data = (unsigned char *)malloc(offers[i].size + 1);
+    if (!o->mime || !o->data) {
+      free(o->mime);
+      free(o->data);
+      continue;
+    }
+    memcpy(o->data, offers[i].data, offers[i].size);
+    o->data[offers[i].size] = '\0';
+    o->size = offers[i].size;
+    g_clip_n++;
+    wl_data_source_offer(src, o->mime);
+    const bool text = !strcmp(o->mime, "text/plain;charset=utf-8") || !strcmp(o->mime, "text/plain");
+    if (text && !g_clip_text) {
+      g_clip_text = strdup((const char *)o->data);
+    }
+  }
+  if (!g_clip_text) {
+    g_clip_text = strdup("");
+  }
+  wl_data_device_set_selection(g.data_device, src, g.serial);
+  if (g.source) {
+    wl_data_source_destroy(g.source);
+  }
+  g.source = src;
+  wl_display_flush(g.display);
+  return 1;
+}
+
 int bk_wl_window_start_drag(BKWindow *win, const BKDragOffer *offers, int count,
                             const uint32_t *icon, int icon_w, int icon_h)
 {
@@ -1176,6 +1247,7 @@ static char *receive_offer(struct wl_data_offer *offer, const char *mime, double
 
 static void host_clipboard_set(void *data, const char *text)
 {
+  clip_offers_free();
   free(g_clip_text);
   g_clip_text = strdup(text ? text : "");
   if (!g.data_manager || !g.data_device) {

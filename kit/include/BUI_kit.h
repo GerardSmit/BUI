@@ -752,6 +752,10 @@ typedef struct BKDragOffer {
  * the host can't (Wayland only for now; X11, Win32 and Cocoa return 0). */
 int BK_window_start_drag(BKWindow *win, const BKDragOffer *offers, int count, const uint32_t *icon,
                          int icon_w, int icon_h);
+/* Put bytes under several mime types on the system clipboard at once (an image with its file and
+ * path, say), copied by the call; pasting text in the kit gets the text/plain offer. Returns 1 when
+ * the host took them, 0 when it can't (Wayland only for now): BK_clipboard_set still takes text. */
+int BK_window_clipboard_offer(BKWindow *win, const BKDragOffer *offers, int count);
 /* The host draws its own title bar ("titlebar" 1 below): which parts of the window are
  * the title bar's. Every point in no area is the host's own content (BK_AREA_CLIENT).
  * BK_AREA_DRAG moves the window (a double click zooms it, or what the system's setting
