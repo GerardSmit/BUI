@@ -49,6 +49,15 @@ pub trait Measurer {
     fn fonts(&self, rec: &Record<'_>, face: &mut dyn FnMut(usize, Font)) {
         let _ = (rec, face);
     }
+
+    /// `rec`'s lines laid out by the host instead of wrapped at
+    /// [`Measurer::wrap_width`] (a table whose cells wrap column by column):
+    /// the item is as tall as their count. Cached like wrapped lines, by
+    /// text, wrap width and faces. The default: `None`, wrapped.
+    fn lay_out(&self, rec: &Record<'_>, list_width: f32, tw: FontWidth<'_>) -> Option<Lines> {
+        let _ = (rec, list_width, tw);
+        None
+    }
 }
 
 /// A key for `rec`'s faces (0: all regular).
@@ -121,6 +130,9 @@ impl TextLayout {
         let key = fonts_key(rec, m);
         let (adv, fonts) = (&mut self.adv, &mut self.fonts);
         let mut make = || {
+            if let Some(lines) = m.lay_out(rec, list_width, tw) {
+                return lines;
+            }
             fonts.clear();
             if key != 0 {
                 m.fonts(rec, &mut |at, font| fonts.push((at, font)));
@@ -153,5 +165,64 @@ impl TextLayout {
     pub fn height_fonts(&mut self, rec: &Record<'_>, m: &impl Measurer, list_width: f32, tw: FontWidth<'_>) -> Fx {
         let lines = self.lines_fonts(rec, m, list_width, tw).count();
         Fx::from_px(f64::from(m.chrome(rec)) + lines as f64 * f64::from(m.line_height()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Laid(Option<usize>);
+
+    impl Measurer for Laid {
+        fn font_size(&self) -> f32 {
+            10.0
+        }
+
+        fn line_height(&self) -> f32 {
+            20.0
+        }
+
+        fn wrap_width(&self, _: &Record<'_>, list_width: f32) -> f32 {
+            list_width
+        }
+
+        fn chrome(&self, _: &Record<'_>) -> f32 {
+            4.0
+        }
+
+        fn estimator(&self, list_width: f32) -> Estimator {
+            Estimator::new(4.0, 20.0, 5.0, f64::from(list_width))
+        }
+
+        fn lay_out(&self, _: &Record<'_>, list_width: f32, tw: FontWidth<'_>) -> Option<Lines> {
+            let n = self.0?;
+            assert!(tw("ab", 10.0, Font::Regular) > 0.0 && list_width > 0.0);
+            Some(Lines::with_starts(vec![0; n - 1]))
+        }
+    }
+
+    fn rec(text: &str) -> Record<'_> {
+        Record { id: 1, time: 0, sender: 0, flags: 0, media_h: 0, text, media: "" }
+    }
+
+    #[test]
+    fn a_host_laid_out_item_is_as_tall_as_its_lines_and_cached_by_width() {
+        let mut tw = |s: &str, size: f32, _: Font| s.len() as f32 * size * 0.5;
+        let mut layout = TextLayout::new(8);
+        let text = "a b c d e f g h";
+        assert_eq!(layout.height_fonts(&rec(text), &Laid(None), 1000.0, &mut tw), Fx::from_px(24.0));
+        let calls = std::cell::Cell::new(0);
+        let mut counted = |s: &str, size: f32, f: Font| {
+            calls.set(calls.get() + 1);
+            tw(s, size, f)
+        };
+        let mut layout = TextLayout::new(8);
+        assert_eq!(layout.height_fonts(&rec(text), &Laid(Some(5)), 1000.0, &mut counted), Fx::from_px(104.0));
+        assert_eq!(layout.lines_fonts(&rec(text), &Laid(Some(5)), 1000.0, &mut counted).line(text, 4), "a b c d e f g h");
+        assert_eq!(layout.lines_fonts(&rec(text), &Laid(Some(5)), 1000.0, &mut counted).line(text, 1), "");
+        assert_eq!(calls.get(), 1);
+        layout.height_fonts(&rec(text), &Laid(Some(5)), 900.0, &mut counted);
+        assert_eq!(calls.get(), 2);
     }
 }

@@ -32,6 +32,14 @@ impl Lines {
         Self::default()
     }
 
+    /// Lines laid out by the host: where each line after the first starts
+    /// (byte offsets, ascending; equal ones are empty lines).
+    #[must_use]
+    pub fn with_starts(starts: Vec<u32>) -> Self {
+        debug_assert!(starts.windows(2).all(|w| w[0] <= w[1]), "line starts ascend");
+        Self { starts: starts.into_boxed_slice() }
+    }
+
     #[must_use]
     pub fn count(&self) -> usize {
         self.starts.len() + 1
