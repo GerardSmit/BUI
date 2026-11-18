@@ -12,6 +12,16 @@ All notable changes to **blenderui** (BUI). The format follows
   while the app turns them off (`Window::set_tooltips`). It hangs below the pointer inside the window, flipped
   above without room, and stylesheets style it like any element.
 
+### Changed
+- **Canvas damage:** `BK_canvas_put_item` compares an item with the one already in its slot and redraws only
+  where a changed item was and is; `BK_canvas_truncate` redraws where the dropped items were (the whole canvas
+  only when it moved). An immediate-mode host that puts every item again each frame (the Rust bindings) no
+  longer repaints the whole window for a change of a few pixels. Copied RGBA and video items always count as
+  changed; borrowed image buffers are compared by their never-reused key.
+- **Placing again:** `BK_geom_set` and `BK_set_num` for a flag (`visible`, `enabled` ...) lay nothing out and
+  redraw nothing when the value is what it was. A host that places its widgets every frame no longer lays the
+  window out and redraws all of it each frame.
+
 ## [0.5.0] - 2026-11-08
 
 ### Added

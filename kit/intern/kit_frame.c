@@ -64,7 +64,9 @@ enum { HAS_W = 1, HAS_H = 2, HAS_RW = 4, HAS_RH = 8 };
 
 void BK_geom_set(BKNode *n, const char *key, double v)
 {
+  const bool had = n->geom != NULL;
   BKGeom *g = geom_ensure(n);
+  const BKGeom was = *g;
   const int iv = (int)floor(v + 0.5);
 #define K(name) (strcmp(key, name) == 0)
   if (K("side")) g->side = iv;
@@ -94,6 +96,9 @@ void BK_geom_set(BKNode *n, const char *key, double v)
   else if (K("reqheight")) g->reqh = iv;
   else if (K("reset_place")) { g->x = g->y = g->relx = g->rely = 0; g->has = 0; }
 #undef K
+  if (had && memcmp(&was, g, sizeof(was)) == 0) {
+    return; /* hosts that place their widgets every frame: the same place lays nothing out */
+  }
   bk_relayout(n);
 }
 
@@ -683,6 +688,7 @@ typedef struct CItem {
   float *coords;
   char *text;
   BKImageRef img; /* BK_ITEM_IMAGE: rgba (copied), imbuf (borrowed) or src (cached) */
+  uint64_t ib_key; /* the borrowed imbuf's key when it was set (keys are never reused) */
   int coords_cap; /* floats allocated in coords */
   int text_cap;   /* bytes allocated in text */
 } CItem;
@@ -694,6 +700,7 @@ typedef struct CanvasData {
   int *idx_key, *idx_pos;
   int idx_cap, idx_count;
   bool idx_valid;
+  int drawn_at[6]; /* x y w h scroll_x scroll at the last truncate: items damage relative to it */
 } CanvasData;
 
 #define IDX_EMPTY INT_MIN
@@ -841,6 +848,7 @@ static void citem_assign(CItem *c, const BKCanvasItem *item)
   else {
     bk_image_ref_set_rgba(&c->img, item->rgba, item->iw, item->ih);
   }
+  c->ib_key = (item->type == BK_ITEM_IMAGE && item->imbuf) ? item->imbuf->key : 0;
   c->it = *item;
   c->it.coords = c->coords;
   c->it.text = tl ? c->text : NULL;
@@ -925,6 +933,55 @@ static bool citem_bbox(const CItem *ci, float b[4])
   return true;
 }
 
+static bool same_str(const char *a, const char *b)
+{
+  return a == b || (a && b && strcmp(a, b) == 0);
+}
+
+/* Whether slot `c` already paints what `item` would (BK_canvas_put_item skips it then).
+ * Copied RGBA and video frames can't be compared cheaply: they count as changed. */
+static bool citem_same(const CItem *c, const BKCanvasItem *item)
+{
+  const BKCanvasItem *o = &c->it;
+  if (o->id != item->id || o->type != item->type || o->ncoords != item->ncoords ||
+      o->anchor != item->anchor || o->hidden != item->hidden || o->text_flags != item->text_flags ||
+      o->clip_on != item->clip_on || o->fit != item->fit || o->frame != item->frame)
+  {
+    return false;
+  }
+  if (memcmp(o->fill, item->fill, sizeof(o->fill)) != 0 ||
+      memcmp(o->outline, item->outline, sizeof(o->outline)) != 0 ||
+      memcmp(&o->width, &item->width, sizeof(float)) != 0 ||
+      memcmp(&o->radius, &item->radius, sizeof(float)) != 0 ||
+      memcmp(&o->size, &item->size, sizeof(float)) != 0 ||
+      memcmp(&o->start, &item->start, sizeof(float)) != 0 ||
+      memcmp(&o->extent, &item->extent, sizeof(float)) != 0 ||
+      memcmp(o->clip, item->clip, sizeof(o->clip)) != 0)
+  {
+    return false;
+  }
+  if (item->ncoords > 0 && memcmp(c->coords, item->coords, sizeof(float) * (size_t)item->ncoords) != 0) {
+    return false;
+  }
+  if (!same_str(o->text, item->text) || !same_str(o->family, item->family)) {
+    return false;
+  }
+  if (item->type != BK_ITEM_IMAGE) {
+    return true;
+  }
+  if (item->rgba || item->video) {
+    return false;
+  }
+  if (item->imbuf) {
+    return !item->src && c->img.kind == BK_IMREF_BORROWED && c->img.u.borrowed == item->imbuf &&
+           c->ib_key == item->imbuf->key;
+  }
+  if (item->src) {
+    return c->img.kind == BK_IMREF_SOURCE && strcmp(bk_image_source_path(c->img.u.source), item->src) == 0;
+  }
+  return c->img.kind == BK_IMREF_NONE;
+}
+
 /* Redraw only where item `ci` paints (the whole canvas when that's unknown). */
 static void canvas_damage(BKNode *n, const CItem *ci)
 {
@@ -991,7 +1048,15 @@ void BK_canvas_put_item(BKNode *n, int index, const BKCanvasItem *item)
     }
     memset(&d->items[d->n++], 0, sizeof(CItem));
   }
+  else if (citem_same(&d->items[index], item)) {
+    d->items[index].it.family = item->family; /* borrowed: the caller's pointer from now on */
+    return;
+  }
+  else {
+    canvas_damage(n, &d->items[index]); /* where it was */
+  }
   citem_assign(&d->items[index], item);
+  canvas_damage(n, &d->items[index]); /* where it is */
   d->idx_valid = false; /* ids may have changed */
 }
 
@@ -1002,11 +1067,16 @@ void BK_canvas_truncate(BKNode *n, int count)
   }
   CanvasData *d = CANVAS(n);
   for (int i = BK_MAX(0, count); i < d->n; i++) {
+    canvas_damage(n, &d->items[i]); /* where it was */
     citem_free(&d->items[i]);
   }
   d->n = BK_CLAMP(count, 0, d->n);
   d->idx_valid = false;
-  bk_invalidate(n);
+  const int at[6] = {n->x, n->y, n->w, n->h, n->scroll_x, n->scroll};
+  if (memcmp(at, d->drawn_at, sizeof(at)) != 0) {
+    memcpy(d->drawn_at, at, sizeof(at));
+    bk_invalidate(n); /* moved, resized or scrolled: every item paints elsewhere */
+  }
 }
 
 void BK_canvas_delete(BKNode *n, int id)

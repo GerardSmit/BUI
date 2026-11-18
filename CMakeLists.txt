@@ -148,6 +148,11 @@ if(BUI_BUILD_TESTS)
     BUI_TEST_TMP="${CMAKE_CURRENT_BINARY_DIR}/image_test_files")
   add_test(NAME bui_image_test COMMAND bui_image_test)
   set_tests_properties(bui_image_test PROPERTIES TIMEOUT 120)
+  # damage: a host that puts the same items and places the same widgets again redraws nothing;
+  # changes only where they are, never leaving stale pixels
+  add_executable(bui_damage_test tests/damage_test.c)
+  target_link_libraries(bui_damage_test PRIVATE bui::kit)
+  add_test(NAME bui_damage_test COMMAND bui_damage_test)
   # video: play, pause, seek, rate, loop, off screen, malformed files, no leaks
   # (exits 77, skipped, without a backend that decodes the H.264 clip)
   add_executable(bui_video_test tests/video_test.c)
