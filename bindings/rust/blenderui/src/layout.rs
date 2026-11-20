@@ -2531,6 +2531,39 @@ impl Frame {
         })
     }
 
+    /// Every box of this frame as tests see it: what it is, where it was
+    /// placed, what clips it and how far it scrolls.
+    pub(crate) fn laid_out(&self) -> Vec<crate::window::LaidOutBox> {
+        self.nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                let el = self.el(i);
+                let text = match &n.content {
+                    Content::Text(t) => Some(t.clone()),
+                    Content::Word { src, start, end } => match &self.nodes[*src as usize].content {
+                        Content::Text(t) => t.get(*start as usize..*end as usize).map(str::to_string),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                crate::window::LaidOutBox {
+                    parent: n.parent,
+                    tag: el.map(|e| e.tag),
+                    id: el.and_then(|e| e.id.as_ref()).map(|id| id.to_string()),
+                    class: self.attr(i, "class").map(str::to_string),
+                    text,
+                    bounds: n.bounds,
+                    clip: n.clip,
+                    opacity: n.opacity,
+                    visible: n.visible,
+                    scroll_range: n.scroll_range,
+                    scroll_pos: n.scroll_pos,
+                }
+            })
+            .collect()
+    }
+
     /// The element data of box `i`.
     pub(crate) fn el(&self, i: usize) -> Option<&ElData> {
         let e = self.nodes[i].el;

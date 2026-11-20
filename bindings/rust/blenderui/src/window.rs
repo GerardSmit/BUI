@@ -715,6 +715,12 @@ impl App {
         self.flush();
     }
 
+    /// Every box of `window`'s last frame, in tree order (see [`LaidOutBox`]).
+    pub fn laid_out(&mut self, window: WindowId) -> Vec<LaidOutBox> {
+        self.flush();
+        self.window(window).and_then(|w| w.frame.as_ref()).map(|f| f.laid_out()).unwrap_or_default()
+    }
+
     /// Bounds (logical pixels) of the element with `.id(id)`.
     pub fn element_bounds(&mut self, window: WindowId, id: &str) -> Option<Bounds<f32>> {
         self.flush();
@@ -1584,6 +1590,11 @@ impl Window {
         self.tips.at?;
         let f = self.frame.as_ref()?;
         f.attr(*f.by_key().get(&self.tips.key()?)?, "title")
+    }
+
+    /// Every box of the last frame, in tree order (see [`LaidOutBox`]).
+    pub fn laid_out(&self) -> Vec<LaidOutBox> {
+        self.frame.as_ref().map(|f| f.laid_out()).unwrap_or_default()
     }
 
     pub fn scroll_offset(&self, id: &str) -> (f32, f32) {
@@ -2620,4 +2631,23 @@ mod min_size_tests {
         // the host scales it: a 900x560 minimum stays 900x560 whatever the UI scale
         assert_eq!(wm_min_size(size(px(900.0), px(560.0))), (900.0, 560.0));
     }
+}
+
+/// One box of a laid-out frame, for tests that check what was drawn where:
+/// elements carry their tag, id and class; text runs and words their text.
+/// `parent` indexes the same list. Bounds and clip are logical pixels;
+/// `scroll_range` is how far the box can scroll, `scroll_pos` where it is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LaidOutBox {
+    pub parent: Option<usize>,
+    pub tag: Option<&'static str>,
+    pub id: Option<String>,
+    pub class: Option<String>,
+    pub text: Option<String>,
+    pub bounds: Bounds<f32>,
+    pub clip: Option<Bounds<f32>>,
+    pub opacity: f32,
+    pub visible: bool,
+    pub scroll_range: (f32, f32),
+    pub scroll_pos: (f32, f32),
 }

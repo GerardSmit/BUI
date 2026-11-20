@@ -985,3 +985,38 @@ fn a_backdrop_can_pass_a_press_through_to_what_lies_under_it() {
         assert_eq!(take(&heard), ["backdrop down"]);
     });
 }
+
+struct Listed;
+
+impl Render for Listed {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        body()
+            .m_0()
+            .child(
+                div().id("list").class("rows").h(px(40.0)).css("overflow-y", "auto")
+                    .child(div().id("one").class("row on").h(px(30.0)).child("First row"))
+                    .child(div().id("two").class("row").h(px(30.0)).child("Second")),
+            )
+    }
+}
+
+#[test]
+fn every_laid_out_box_is_open_to_tests() {
+    Application::headless().run(|cx| {
+        let win = open(cx, 200.0, 100.0, Listed);
+        cx.draw(win.id);
+        let boxes = cx.laid_out(win.id);
+        let at = |id: &str| boxes.iter().position(|b| b.id.as_deref() == Some(id)).unwrap_or_else(|| panic!("#{id}"));
+        let (list, one) = (at("list"), at("one"));
+        assert_eq!(boxes[one].class.as_deref(), Some("row on"));
+        assert_eq!(boxes[one].tag, Some("div"));
+        assert_eq!(Some(boxes[one].bounds), cx.element_bounds(win.id, "one"));
+        assert!(boxes[one].parent == Some(list) && boxes[list].scroll_range.1 > 0.0, "{:?}", boxes[list]);
+        let text: Vec<&str> = boxes.iter().filter(|b| b.parent == Some(one) || b.parent.is_some_and(|p| boxes[p].parent == Some(one))).filter_map(|b| b.text.as_deref()).collect();
+        assert!(text.concat().contains("First"), "{text:?}");
+        let two = at("two");
+        assert!(boxes[two].clip.is_some_and(|c| c.size.height <= 40.0), "clipped by its scroller: {:?}", boxes[two].clip);
+        win.update(cx, |_, w, _| assert_eq!(w.laid_out().len(), boxes.len())).unwrap();
+        cx.quit();
+    });
+}
