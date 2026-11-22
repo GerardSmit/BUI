@@ -116,7 +116,7 @@ pub mod paint;
 pub mod scrollbar;
 pub mod tooltip;
 pub mod video;
-pub(crate) mod prof;
+pub mod prof;
 mod selector;
 pub mod hooks;
 pub mod style;
