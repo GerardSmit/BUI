@@ -256,6 +256,34 @@ fn a_still_middle_click_autoscrolls_until_escape_a_click_or_the_wheel() {
 }
 
 #[test]
+fn autoscroll_ends_when_the_window_loses_focus_held_or_sticky() {
+    run("dark", |cx| {
+        let (id, chat) = open(cx, 5_000);
+        frame(cx, id);
+        cx.simulate_activation(id, true);
+        for held in [true, false] {
+            cx.simulate_middle(id, 300.0, 300.0, true);
+            if !held {
+                cx.simulate_middle(id, 300.0, 300.0, false);
+            }
+            assert!(cx.window(id).unwrap().is_autoscrolling(), "held {held}");
+            cx.simulate_mouse_move(id, 300.0, 150.0);
+            frames(cx, id, 8);
+            cx.simulate_activation(id, false);
+            assert!(!cx.window(id).unwrap().is_autoscrolling(), "held {held}: focus lost");
+            let after = offset(cx, &chat);
+            frames(cx, id, 8);
+            assert_eq!(offset(cx, &chat), after, "held {held}: stopped");
+            if held {
+                cx.simulate_middle(id, 300.0, 150.0, false);
+                assert!(!cx.window(id).unwrap().is_autoscrolling(), "the late release starts nothing");
+            }
+            cx.simulate_activation(id, true);
+        }
+    });
+}
+
+#[test]
 fn autoscroll_stops_cleanly_at_the_end_and_asks_for_no_frames() {
     run("dark", |cx| {
         let (id, chat) = open(cx, 2_000);

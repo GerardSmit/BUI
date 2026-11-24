@@ -881,8 +881,7 @@ impl App {
     pub fn simulate_activation(&mut self, window: WindowId, active: bool) {
         if let Some(win) = self.windows.get_mut(window.0).and_then(|w| w.as_deref_mut()) {
             if win.native.is_none() && win.active != Some(active) {
-                win.active = Some(active);
-                win.dirty = true;
+                win.follow_active(Some(active));
             }
         }
         self.flush();
@@ -952,8 +951,7 @@ unsafe extern "C" fn on_frame(data: *mut c_void, _win: *mut sys::BKWindow) {
             // focus in / out: the kit renders a frame for it, rebuild so views see it
             let active = w.is_active();
             if active != w.active {
-                w.active = active;
-                w.dirty = true;
+                w.follow_active(active);
             }
             if w.dirty {
                 w.rebuild(app);
@@ -2409,6 +2407,14 @@ impl Window {
         let path = self.path_at(self.pointer.0, self.pointer.1);
         self.refresh_cursor(&path);
         self.dirty = true;
+    }
+
+    fn follow_active(&mut self, active: Option<bool>) {
+        self.active = active;
+        self.dirty = true;
+        if active == Some(false) {
+            self.stop_autoscroll();
+        }
     }
 
     /// Whether a middle-button autoscroll is on (held or sticky).
