@@ -497,11 +497,12 @@ static void apply_cursor(BKWindow *win)
   if (!g.pointer || g.pointer_win != win) {
     return;
   }
-  static const char *names[12] = {"left_ptr",   "sb_h_double_arrow", "sb_v_double_arrow",
-                                  "xterm",      "crosshair",         "hand2",
-                                  "fleur",      "left_ptr",          "bottom_left_corner",
-                                  "bottom_right_corner", "X_cursor", "watch"};
-  const int c = BK_CLAMP(win->cursor, 0, 11);
+  static const char *names[BK_CURSOR_COUNT] = {
+      "left_ptr",   "sb_h_double_arrow", "sb_v_double_arrow",   "xterm",
+      "crosshair",  "hand2",             "fleur",               "left_ptr",
+      "bottom_left_corner", "bottom_right_corner", "X_cursor",  "watch",
+      "left_ptr_watch", "sb_v_double_arrow", "sb_up_arrow",     "sb_down_arrow"};
+  const int c = BK_CLAMP(win->cursor, 0, BK_CURSOR_COUNT - 1);
   if (c == BK_CURSOR_NONE) {
     wl_pointer_set_cursor(g.pointer, g.pointer_serial, NULL, 0, 0);
     return;

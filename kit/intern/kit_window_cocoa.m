@@ -860,6 +860,12 @@ static NSCursor *ns_cursor(int c)
       return [NSCursor openHandCursor];
     case BK_CURSOR_NOT_ALLOWED:
       return [NSCursor operationNotAllowedCursor];
+    case BK_CURSOR_SCROLL_NS:
+      return [NSCursor resizeUpDownCursor];
+    case BK_CURSOR_SCROLL_UP:
+      return [NSCursor resizeUpCursor];
+    case BK_CURSOR_SCROLL_DOWN:
+      return [NSCursor resizeDownCursor];
   }
   return [NSCursor arrowCursor];
 }

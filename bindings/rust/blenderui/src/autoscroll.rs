@@ -7,7 +7,7 @@
 //! from the anchor scrolls it, faster the further it is, every frame; the release stops it. A
 //! press and release without leaving the anchor's dead zone makes it sticky: moving the pointer
 //! scrolls until any click, Escape or the wheel. The window captures the pointer meanwhile
-//! (`BK_capture_pointer`: over a text box too) and shows the all-scroll cursor.
+//! (`BK_capture_pointer`: over a text box too) and shows a scroll cursor pointing the way it goes (`Heading`).
 //!
 //! Frames come only while it moves: inside the dead zone, or with nothing left to scroll (the top
 //! or the bottom), none are asked for until the pointer moves again.
@@ -32,6 +32,55 @@ pub fn speed(dy: f32) -> f32 {
         return 0.0;
     }
     (past * 7.0 + past * past * 0.04).min(MAX_SPEED) * dy.signum()
+}
+
+/// Which way an autoscroll goes with the pointer where it is: what its cursor shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Heading {
+    /// In the dead zone: nothing scrolls, either way may come.
+    Still,
+    Up,
+    Down,
+}
+
+impl Heading {
+    /// The heading of a pointer `dy` px below the anchor.
+    #[must_use]
+    pub fn of(dy: f32) -> Heading {
+        let v = speed(dy);
+        if v < 0.0 {
+            Heading::Up
+        } else if v > 0.0 {
+            Heading::Down
+        } else {
+            Heading::Still
+        }
+    }
+
+    /// The kit's cursor for it (`BK_CURSOR_SCROLL_NS`, `_UP`, `_DOWN`).
+    #[must_use]
+    pub fn cursor(self) -> i32 {
+        match self {
+            Heading::Still => CURSOR_SCROLL_NS,
+            Heading::Up => CURSOR_SCROLL_UP,
+            Heading::Down => CURSOR_SCROLL_DOWN,
+        }
+    }
+}
+
+/// The kit's still autoscroll cursor: arrows both ways.
+pub const CURSOR_SCROLL_NS: i32 = 13;
+/// The kit's autoscroll cursor going up.
+pub const CURSOR_SCROLL_UP: i32 = 14;
+/// The kit's autoscroll cursor going down.
+pub const CURSOR_SCROLL_DOWN: i32 = 15;
+
+/// An autoscroll as a host shows it ([`crate::Window::autoscroll`]): where it is anchored
+/// (window logical px, where its marker goes) and which way it goes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Anchor {
+    pub at: (f32, f32),
+    pub heading: Heading,
 }
 
 /// An autoscroll in progress.
@@ -59,6 +108,11 @@ impl Autoscroll {
         let out = (p.0 - self.origin.0).hypot(p.1 - self.origin.1) > DEAD_ZONE;
         self.moved |= out;
         out
+    }
+
+    /// What a host shows of it with the pointer at `p`.
+    pub fn anchor(&self, p: (f32, f32)) -> Anchor {
+        Anchor { at: self.origin, heading: Heading::of(p.1 - self.origin.1) }
     }
 
     /// How far to scroll at clock time `now` with the pointer at `p` (px, positive: down), or
@@ -112,5 +166,17 @@ mod tests {
         // up is negative
         assert_eq!(a.step(11.0, (100.0, 0.0)), Some(0.0));
         assert!(a.step(11.1, (100.0, 0.0)).unwrap() < 0.0);
+    }
+
+    #[test]
+    fn the_heading_follows_the_pointer_past_the_dead_zone() {
+        let a = Autoscroll::new((100.0, 100.0), Vec::new());
+        assert_eq!(a.anchor((100.0, 100.0)), Anchor { at: (100.0, 100.0), heading: Heading::Still });
+        assert_eq!(a.anchor((300.0, 100.0 + DEAD_ZONE)).heading, Heading::Still, "sideways and the dead zone: still");
+        assert_eq!(a.anchor((100.0, 60.0)).heading, Heading::Up);
+        assert_eq!(a.anchor((100.0, 140.0)).heading, Heading::Down);
+        assert_eq!(a.anchor((100.0, 140.0)).at, (100.0, 100.0), "the anchor stays where it was pressed");
+        let cursors = [Heading::Still, Heading::Up, Heading::Down].map(Heading::cursor);
+        assert_eq!(cursors, [CURSOR_SCROLL_NS, CURSOR_SCROLL_UP, CURSOR_SCROLL_DOWN]);
     }
 }

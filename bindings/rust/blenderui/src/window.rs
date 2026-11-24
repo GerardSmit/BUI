@@ -27,9 +27,6 @@ use blenderui_sys as sys;
 /// How early a timer may fire and still count as due, s.
 pub(crate) const TIMER_SLOP: f64 = 0.0005;
 
-/// The kit's all-scroll cursor (CSS `all-scroll` / `move`), shown during an autoscroll.
-const ALL_SCROLL: i32 = 6;
-
 // ==========================================================================
 // Entities
 
@@ -2139,11 +2136,11 @@ impl Window {
             sys::BK_EV_MOTION | sys::BK_EV_ENTER => {
                 self.pointer = (x, y);
                 // out of the dead zone from stillness: the next frame starts moving
-                if let Some(a) = &mut self.autoscroll
-                    && a.pointer((x, y))
-                    && a.last.is_none()
-                {
-                    self.dirty = true;
+                if let Some(a) = &mut self.autoscroll {
+                    if a.pointer((x, y)) && a.last.is_none() {
+                        self.dirty = true;
+                    }
+                    self.refresh_cursor(&[]);
                 }
                 if self.bars.drag.is_some() {
                     self.drag_bar(y);
@@ -2352,12 +2349,12 @@ impl Window {
         }
     }
 
-    /// The pointer's cursor: the all-scroll one during an autoscroll, else that of the deepest
+    /// The pointer's cursor: the autoscroll's heading during one, else that of the deepest
     /// element along `path` that sets one.
     fn refresh_cursor(&mut self, path: &[Key]) {
         let Some(f) = &self.frame else { return };
-        let cursor = if self.autoscroll.is_some() {
-            ALL_SCROLL
+        let cursor = if let Some(a) = &self.autoscroll {
+            a.anchor(self.pointer).heading.cursor()
         } else {
             path.iter().rev()
                 .find_map(|k| f.by_key().get(k).and_then(|&i| self.caches.styles[f.nodes[i].style].cursor)).unwrap_or(0)
@@ -2422,7 +2419,12 @@ impl Window {
         self.autoscroll.is_some()
     }
 
-    /// The cursor shown (the kit's: 0 default, 3 text, 5 pointer, 6 all-scroll ...).
+    /// The autoscroll on, as a host shows it: its anchor's marker and which way it goes.
+    pub fn autoscroll(&self) -> Option<crate::autoscroll::Anchor> {
+        self.autoscroll.as_ref().map(|a| a.anchor(self.pointer))
+    }
+
+    /// The cursor shown (the kit's: 0 default, 3 text, 5 pointer, 13 to 15 autoscroll ...).
     pub fn cursor_shape(&self) -> i32 {
         self.cursor
     }
