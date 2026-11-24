@@ -758,7 +758,7 @@ fn a_triple_click_selects_a_text_box_line_and_counts_on() {
         let b = cx.element_bounds(id, "box").unwrap();
         // on the first line ("one two"), a little in
         let (x, y) = (b.origin.x + 8.0, b.origin.y + 6.0);
-        let pause = || std::thread::sleep(std::time::Duration::from_millis(400));
+        let pause = |cx: &mut App| cx.advance_clock(std::time::Duration::from_millis(400));
         cx.simulate_click(id, x, y);
         cx.simulate_click(id, x, y);
         assert_eq!(caret(cx), Some(TextCaret { anchor: 0, caret: 3 }), "a double click: the word");
@@ -768,11 +768,11 @@ fn a_triple_click_selects_a_text_box_line_and_counts_on() {
         assert_eq!(caret(cx), Some(TextCaret { anchor: 0, caret: 7 }), "a fourth keeps it");
         assert_eq!(*downs.borrow(), [("box", 3), ("box", 3)], "the box hears its triple clicks only");
         downs.borrow_mut().clear();
-        pause();
+        pause(cx);
         cx.simulate_click(id, x, y);
         assert_eq!(caret(cx).map(|c| c.anchor == c.caret), Some(true), "after a pause, a first click again");
         // a plain box hears every press's count, on past two
-        pause();
+        pause(cx);
         let p = cx.element_bounds(id, "pad").unwrap();
         let (x, y) = (p.origin.x + 10.0, p.origin.y + 10.0);
         for _ in 0..4 {

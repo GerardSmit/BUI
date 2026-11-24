@@ -587,6 +587,10 @@ void BK_set_animations(int enabled); /* also animated images (off: reduced motio
 BKContext *BK_context_new(BKNode *root);
 void BK_context_free(BKContext *ctx);
 void BK_context_set_host(BKContext *ctx, const BKHost *host);
+/* The time (seconds) input from now on is taken at, for counting clicks in a row (a double
+ * click is a second press within 0.35 s): a headless host passes its own clock so tests
+ * never depend on real time; a negative time goes back to the real clock (the default). */
+void BK_context_set_input_time(BKContext *ctx, double seconds);
 void BK_context_set_header(BKContext *ctx, BKNode *header); /* fixed top bar */
 BKNode *BK_context_root(BKContext *ctx);
 

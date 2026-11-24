@@ -1391,6 +1391,7 @@ BKContext *BK_context_new(BKNode *root)
   BKContext *ctx = (BKContext *)calloc(1, sizeof(BKContext));
   ctx->root = root;
   ctx->cursor = BK_CURSOR_DEFAULT;
+  ctx->input_time = -1.0;
   ctx->layout_dirty = true;
   ctx->full_dirty = true;
   if (root) {
@@ -1581,6 +1582,16 @@ int BK_theme_color(const char *key, float r_rgba[4])
 void BK_context_set_host(BKContext *ctx, const BKHost *host)
 {
   ctx->host = *host;
+}
+
+void BK_context_set_input_time(BKContext *ctx, double seconds)
+{
+  ctx->input_time = seconds;
+}
+
+static double input_time(const BKContext *ctx)
+{
+  return ctx->input_time >= 0.0 ? ctx->input_time : bk_time();
 }
 
 void BK_context_set_header(BKContext *ctx, BKNode *header)
@@ -2612,7 +2623,7 @@ static int in_BK_press(BKContext *ctx, int x, int y, int mods)
   ctx->interaction++;
   bk_invalidate(target);
   BKEvent e = make_event(ctx, target, x, y, mods);
-  const double now = bk_time();
+  const double now = input_time(ctx);
   const bool again = ctx->last_click_node == target && now - ctx->last_click_t < DOUBLE_CLICK_S &&
                      abs(x - ctx->last_click_x) <= DOUBLE_CLICK_PX &&
                      abs(y - ctx->last_click_y) <= DOUBLE_CLICK_PX;

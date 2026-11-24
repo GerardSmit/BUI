@@ -564,6 +564,7 @@ struct BKContext {
   bool has_skip;
   int pointer_x, pointer_y;
   double last_click_t;
+  double input_time; /* < 0: input is timed on bk_time() */
   BKNode *last_click_node;
   int last_click_x, last_click_y;
   int clicks; /* the presses in a row on last_click_node, this one included */

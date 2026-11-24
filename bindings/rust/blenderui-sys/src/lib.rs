@@ -378,6 +378,7 @@ unsafe extern "C" {
     pub fn BK_context_new(root: *mut BKNode) -> *mut BKContext;
     pub fn BK_context_free(ctx: *mut BKContext);
     pub fn BK_context_set_host(ctx: *mut BKContext, host: *const BKHost);
+    pub fn BK_context_set_input_time(ctx: *mut BKContext, seconds: c_double);
     pub fn BK_render(ctx: *mut BKContext, r: *mut BuiRaster, w: c_int, h: c_int, full: c_int)
         -> c_int;
     pub fn BK_needs_render(ctx: *mut BKContext) -> c_int;

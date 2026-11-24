@@ -735,6 +735,10 @@ impl App {
             if w.frame.is_none() {
                 return;
             }
+            if w.native.is_none() {
+                // SAFETY: the window's live context.
+                unsafe { sys::BK_context_set_input_time(w.ctx, w.clock.now()) };
+            }
             f(w.ctx, w.scale);
         }
         self.flush();
