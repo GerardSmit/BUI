@@ -887,6 +887,26 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
   return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+typedef struct AppIcon {
+  int width, height;
+  HICON icon;
+} AppIcon;
+
+static BOOL CALLBACK load_first_icon_group(HMODULE module, LPCWSTR type, LPWSTR name, LONG_PTR into)
+{
+  (void)type;
+  AppIcon *want = (AppIcon *)into;
+  want->icon = (HICON)LoadImageW(module, name, IMAGE_ICON, want->width, want->height, LR_SHARED);
+  return FALSE;
+}
+
+static HICON app_icon(HINSTANCE inst, int width, int height)
+{
+  AppIcon want = {width, height, NULL};
+  EnumResourceNamesW(inst, (LPCWSTR)RT_GROUP_ICON, load_first_icon_group, (LONG_PTR)&want);
+  return want.icon ? want.icon : LoadIconW(NULL, (LPCWSTR)IDI_APPLICATION);
+}
+
 BKWindow *BK_window_new(BKContext *ctx, const char *title, int width, int height)
 {
   dpi_awareness();
@@ -898,7 +918,8 @@ BKWindow *BK_window_new(BKContext *ctx, const char *title, int width, int height
     wc.hInstance = inst;
     wc.hCursor = NULL; /* WM_SETCURSOR */
     wc.lpszClassName = k_class;
-    wc.hIcon = LoadIconW(NULL, (LPCWSTR)IDI_APPLICATION);
+    wc.hIcon = app_icon(inst, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON));
+    wc.hIconSm = app_icon(inst, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
     if (!RegisterClassExW(&wc)) {
       return NULL;
     }
