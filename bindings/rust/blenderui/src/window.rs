@@ -690,20 +690,22 @@ impl App {
     /// Images it shows are decoded first (the frame waits for the kit's
     /// image workers), so the pixels are deterministic.
     pub fn draw(&mut self, id: WindowId) -> (usize, usize, Vec<u32>) {
-        self.draw_with(id, true)
+        self.draw_with(id, true, false)
     }
 
     /// Render the window the way a native window does: only the regions damaged
-    /// since the last render are redrawn over the previous frame's pixels.
-    /// Returns those pixels and, for the same state, a full redraw's: a native
+    /// since the last render are redrawn over the previous frame's pixels, on a
+    /// raster that keeps every earlier frame's pixels (call it frame after frame;
+    /// a [`App::draw`] in between redraws that raster whole). Returns those pixels
+    /// and, for the same state, a full redraw drawn on a separate raster: a native
     /// window shows the first, so any difference is a damage-tracking bug.
     pub fn draw_damaged(&mut self, id: WindowId) -> DamagedFrame {
-        let (w, h, damaged) = self.draw_with(id, false);
-        let (_, _, full) = self.draw_with(id, true);
+        let (w, h, damaged) = self.draw_with(id, false, false);
+        let (_, _, full) = self.draw_with(id, true, true);
         DamagedFrame { width: w, height: h, damaged, full }
     }
 
-    fn draw_with(&mut self, id: WindowId, full: bool) -> (usize, usize, Vec<u32>) {
+    fn draw_with(&mut self, id: WindowId, full: bool, reference: bool) -> (usize, usize, Vec<u32>) {
         self.flush();
         let Some(w) = self.windows.get_mut(id.0).and_then(|w| w.as_deref_mut()) else {
             return (0, 0, Vec::new());
@@ -711,11 +713,13 @@ impl App {
         let (pw, ph) = w.phys;
         // SAFETY: the raster is sized to the window; pixels are copied out.
         let px = unsafe {
-            if w.raster.is_null() {
-                w.raster = sys::BUI_raster_create(pw, ph);
+            let slot = if reference { &mut w.reference } else { &mut w.raster };
+            if slot.is_null() {
+                *slot = sys::BUI_raster_create(pw, ph);
             }
+            let raster = *slot;
             let _s = span(Phase::Widgets);
-            sys::BK_render(w.ctx, w.raster, pw, ph, c_int::from(full));
+            sys::BK_render(w.ctx, raster, pw, ph, c_int::from(full));
             // decodes this frame asked for: wait, then draw what arrived
             let mut st = sys::BKImageStats::default();
             sys::BK_image_stats(&raw mut st);
@@ -727,9 +731,9 @@ impl App {
                 sys::BK_image_stats(&raw mut st);
             }
             if sys::BK_image_poll() > 0 {
-                sys::BK_render(w.ctx, w.raster, pw, ph, 0);
+                sys::BK_render(w.ctx, raster, pw, ph, 0);
             }
-            let p = sys::BUI_raster_pixels(w.raster);
+            let p = sys::BUI_raster_pixels(raster);
             std::slice::from_raw_parts(p, (pw * ph) as usize).to_vec()
         };
         self.flush(); // configure events from the render
@@ -1135,6 +1139,8 @@ pub struct Window {
     kit_focus: *mut sys::BKNode,
     native: Option<*mut sys::BKWindow>,
     raster: *mut sys::BuiRaster,
+    /// The full redraws [`App::draw_damaged`] compares against.
+    reference: *mut sys::BuiRaster,
     phys: (i32, i32),
     scale: f32,
     view: Option<ViewFn>,
@@ -1234,6 +1240,7 @@ impl Window {
                 kit_focus: std::ptr::null_mut(),
                 native: None,
                 raster: std::ptr::null_mut(),
+                reference: std::ptr::null_mut(),
                 phys: (w.round() as i32, h.round() as i32),
                 scale: 1.0,
                 view: None,
@@ -1303,6 +1310,10 @@ impl Window {
             if !self.raster.is_null() {
                 sys::BUI_raster_free(self.raster);
                 self.raster = std::ptr::null_mut();
+            }
+            if !self.reference.is_null() {
+                sys::BUI_raster_free(self.reference);
+                self.reference = std::ptr::null_mut();
             }
         }
     }
