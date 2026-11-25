@@ -228,6 +228,11 @@ static void host_request(void *data)
 
 static HCURSOR cursor_handle(int c)
 {
+  if (c >= BK_CURSOR_SCROLL_NS && c <= BK_CURSOR_SCROLL_S) {
+    static const WORD pan_ids[] = {32652, 32655, 32656};
+    HCURSOR pan = LoadCursorW(NULL, MAKEINTRESOURCEW(pan_ids[c - BK_CURSOR_SCROLL_NS]));
+    return pan ? pan : LoadCursorW(NULL, IDC_SIZENS);
+  }
   LPCWSTR id = IDC_ARROW;
   switch (c) {
     case BK_CURSOR_EW:
