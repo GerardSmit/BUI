@@ -171,6 +171,28 @@ pub trait Render: 'static + Sized {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WindowId(pub usize);
 
+/// One frame rendered both ways by [`App::draw_damaged`] (device pixels, 0x00RRGGBB).
+#[derive(Clone, Debug)]
+pub struct DamagedFrame {
+    pub width: usize,
+    pub height: usize,
+    /// Only the damaged regions redrawn over the previous frame (what a native window shows).
+    pub damaged: Vec<u32>,
+    /// The same state drawn whole.
+    pub full: Vec<u32>,
+}
+
+impl DamagedFrame {
+    /// The pixels where the damaged frame differs from the full one: (x, y) pairs.
+    #[must_use]
+    pub fn stale(&self) -> Vec<(usize, usize)> {
+        self.damaged.iter().zip(&self.full).enumerate()
+            .filter(|(_, (a, b))| a != b)
+            .map(|(i, _)| (i % self.width.max(1), i / self.width.max(1)))
+            .collect()
+    }
+}
+
 /// A typed window handle (gpui's `WindowHandle<V>`).
 pub struct WindowHandle<V> {
     pub id: WindowId,
@@ -668,6 +690,20 @@ impl App {
     /// Images it shows are decoded first (the frame waits for the kit's
     /// image workers), so the pixels are deterministic.
     pub fn draw(&mut self, id: WindowId) -> (usize, usize, Vec<u32>) {
+        self.draw_with(id, true)
+    }
+
+    /// Render the window the way a native window does: only the regions damaged
+    /// since the last render are redrawn over the previous frame's pixels.
+    /// Returns those pixels and, for the same state, a full redraw's: a native
+    /// window shows the first, so any difference is a damage-tracking bug.
+    pub fn draw_damaged(&mut self, id: WindowId) -> DamagedFrame {
+        let (w, h, damaged) = self.draw_with(id, false);
+        let (_, _, full) = self.draw_with(id, true);
+        DamagedFrame { width: w, height: h, damaged, full }
+    }
+
+    fn draw_with(&mut self, id: WindowId, full: bool) -> (usize, usize, Vec<u32>) {
         self.flush();
         let Some(w) = self.windows.get_mut(id.0).and_then(|w| w.as_deref_mut()) else {
             return (0, 0, Vec::new());
@@ -679,7 +715,7 @@ impl App {
                 w.raster = sys::BUI_raster_create(pw, ph);
             }
             let _s = span(Phase::Widgets);
-            sys::BK_render(w.ctx, w.raster, pw, ph, 1);
+            sys::BK_render(w.ctx, w.raster, pw, ph, c_int::from(full));
             // decodes this frame asked for: wait, then draw what arrived
             let mut st = sys::BKImageStats::default();
             sys::BK_image_stats(&raw mut st);
