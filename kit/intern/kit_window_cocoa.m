@@ -862,10 +862,22 @@ static NSCursor *ns_cursor(int c)
       return [NSCursor operationNotAllowedCursor];
     case BK_CURSOR_SCROLL_NS:
       return [NSCursor resizeUpDownCursor];
-    case BK_CURSOR_SCROLL_UP:
+    case BK_CURSOR_SCROLL_WE:
+      return [NSCursor resizeLeftRightCursor];
+    case BK_CURSOR_SCROLL_ALL:
+      return [NSCursor openHandCursor];
+    case BK_CURSOR_SCROLL_N:
+    case BK_CURSOR_SCROLL_NW:
+    case BK_CURSOR_SCROLL_NE: /* AppKit has no diagonal pan cursor: the way up or down */
       return [NSCursor resizeUpCursor];
-    case BK_CURSOR_SCROLL_DOWN:
+    case BK_CURSOR_SCROLL_S:
+    case BK_CURSOR_SCROLL_SW:
+    case BK_CURSOR_SCROLL_SE:
       return [NSCursor resizeDownCursor];
+    case BK_CURSOR_SCROLL_W:
+      return [NSCursor resizeLeftCursor];
+    case BK_CURSOR_SCROLL_E:
+      return [NSCursor resizeRightCursor];
   }
   return [NSCursor arrowCursor];
 }

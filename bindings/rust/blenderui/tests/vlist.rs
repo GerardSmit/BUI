@@ -215,24 +215,24 @@ fn the_middle_button_held_and_moved_scrolls_and_its_release_stops_it() {
             let w = cx.window(id).unwrap();
             (w.autoscroll().map(|a| (a.at, a.heading)), w.cursor_shape())
         };
-        assert_eq!(shown(cx), (Some(((300.0, 300.0), Heading::Still)), autoscroll::CURSOR_SCROLL_NS), "anchored, still");
+        assert_eq!(shown(cx), (Some(((300.0, 300.0), Heading::Still)), autoscroll::cursor::NS), "anchored, still");
         // in the dead zone: nothing moves
         cx.simulate_mouse_move(id, 303.0, 305.0);
         frames(cx, id, 5);
         assert_eq!(offset(cx, &chat), start);
-        assert_eq!(shown(cx).1, autoscroll::CURSOR_SCROLL_NS);
+        assert_eq!(shown(cx).1, autoscroll::cursor::NS);
         cx.simulate_mouse_move(id, 300.0, 400.0);
-        assert_eq!(shown(cx), (Some(((300.0, 300.0), Heading::Down)), autoscroll::CURSOR_SCROLL_DOWN), "below: down");
+        assert_eq!(shown(cx), (Some(((300.0, 300.0), Heading::S)), autoscroll::cursor::S), "below: down");
         // above the anchor: up, faster further out
         cx.simulate_mouse_move(id, 300.0, 200.0);
-        assert_eq!(shown(cx), (Some(((300.0, 300.0), Heading::Up)), autoscroll::CURSOR_SCROLL_UP), "above: up");
+        assert_eq!(shown(cx), (Some(((300.0, 300.0), Heading::N)), autoscroll::cursor::N), "above: up");
         frames(cx, id, 10);
         let up = offset(cx, &chat);
         assert!(up.0 < start.0, "{up:?} {start:?}");
         cx.simulate_middle(id, 300.0, 200.0, false);
         assert!(!cx.window(id).unwrap().is_autoscrolling());
         assert_eq!(shown(cx).0, None, "no anchor after");
-        assert!(shown(cx).1 < autoscroll::CURSOR_SCROLL_NS, "the cursor of what is under it again");
+        assert!(shown(cx).1 < autoscroll::cursor::NS, "the cursor of what is under it again");
         frames(cx, id, 10);
         assert_eq!(offset(cx, &chat), up, "the release stopped it");
     });

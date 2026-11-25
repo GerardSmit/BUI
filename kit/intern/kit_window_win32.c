@@ -226,91 +226,21 @@ static void host_request(void *data)
   }
 }
 
-#define PAN_SIDE 32
-#define PAN_SAMPLES 4
-
-static int pan_inside(float x, float y, int ways)
-{
-  const float mid = PAN_SIDE * 0.5f, dx = x - mid, dy = y - mid;
-  if (dx * dx + dy * dy <= 2.5f * 2.5f) {
-    return 1;
-  }
-  const float half = 6.0f, from = 5.0f, to = 12.0f;
-  const float along = dy < 0 ? -dy : dy;
-  if (((dy < 0 && (ways & 1)) || (dy > 0 && (ways & 2))) && along >= from && along <= to) {
-    const float w = half * (to - along) / (to - from);
-    return dx >= -w && dx <= w;
-  }
-  return 0;
-}
-
-static HCURSOR pan_cursor(int ways)
-{
-  float fill[PAN_SIDE][PAN_SIDE];
-  for (int y = 0; y < PAN_SIDE; y++) {
-    for (int x = 0; x < PAN_SIDE; x++) {
-      int hits = 0;
-      for (int sy = 0; sy < PAN_SAMPLES; sy++) {
-        for (int sx = 0; sx < PAN_SAMPLES; sx++) {
-          hits += pan_inside(x + (sx + 0.5f) / PAN_SAMPLES, y + (sy + 0.5f) / PAN_SAMPLES, ways);
-        }
-      }
-      fill[y][x] = (float)hits / (PAN_SAMPLES * PAN_SAMPLES);
-    }
-  }
-  BITMAPV5HEADER bi = {0};
-  bi.bV5Size = sizeof(bi);
-  bi.bV5Width = PAN_SIDE;
-  bi.bV5Height = -PAN_SIDE;
-  bi.bV5Planes = 1;
-  bi.bV5BitCount = 32;
-  bi.bV5Compression = BI_BITFIELDS;
-  bi.bV5RedMask = 0x00FF0000;
-  bi.bV5GreenMask = 0x0000FF00;
-  bi.bV5BlueMask = 0x000000FF;
-  bi.bV5AlphaMask = 0xFF000000;
-  void *bits = NULL;
-  HDC dc = GetDC(NULL);
-  HBITMAP color = CreateDIBSection(dc, (BITMAPINFO *)&bi, DIB_RGB_COLORS, &bits, NULL, 0);
-  ReleaseDC(NULL, dc);
-  if (!color || !bits) {
-    return LoadCursorW(NULL, IDC_SIZENS);
-  }
-  DWORD *px = (DWORD *)bits;
-  for (int y = 0; y < PAN_SIDE; y++) {
-    for (int x = 0; x < PAN_SIDE; x++) {
-      float rim = 0;
-      for (int ny = y - 1; ny <= y + 1; ny++) {
-        for (int nx = x - 1; nx <= x + 1; nx++) {
-          if (nx >= 0 && ny >= 0 && nx < PAN_SIDE && ny < PAN_SIDE && fill[ny][nx] > rim) {
-            rim = fill[ny][nx];
-          }
-        }
-      }
-      const float f = fill[y][x], a = f > rim ? f : rim;
-      const DWORD ink = a > 0 ? (DWORD)(255.0f * f / a + 0.5f) : 0;
-      px[y * PAN_SIDE + x] = ((DWORD)(255.0f * a + 0.5f) << 24) | (ink << 16) | (ink << 8) | ink;
-    }
-  }
-  static const BYTE clear[PAN_SIDE * PAN_SIDE / 8] = {0};
-  HBITMAP mask = CreateBitmap(PAN_SIDE, PAN_SIDE, 1, 1, clear);
-  ICONINFO ii = {FALSE, PAN_SIDE / 2, PAN_SIDE / 2, mask, color};
-  HCURSOR cursor = CreateIconIndirect(&ii);
-  DeleteObject(color);
-  DeleteObject(mask);
-  return cursor ? cursor : LoadCursorW(NULL, IDC_SIZENS);
-}
+/* Windows' pan cursors (the ones its own autoscroll shows) are user32 resources
+ * 32652..32662 with no IDC_ names, in BK_CURSOR_SCROLL_*'s order. */
+#define PAN_CURSOR_FIRST 32652
 
 static HCURSOR cursor_handle(int c)
 {
-  static HCURSOR pans[3];
-  if (c >= BK_CURSOR_SCROLL_NS && c <= BK_CURSOR_SCROLL_DOWN) {
-    const int i = c - BK_CURSOR_SCROLL_NS;
-    if (!pans[i]) {
-      static const int ways[3] = {3, 1, 2};
-      pans[i] = pan_cursor(ways[i]);
+  if (c >= BK_CURSOR_SCROLL_NS && c <= BK_CURSOR_SCROLL_SE) {
+    HCURSOR pan = LoadCursorW(NULL, MAKEINTRESOURCEW(PAN_CURSOR_FIRST + c - BK_CURSOR_SCROLL_NS));
+    if (pan) {
+      return pan;
     }
-    return pans[i];
+    static const LPCWSTR near_pan[BK_CURSOR_SCROLL_SE - BK_CURSOR_SCROLL_NS + 1] = {
+        IDC_SIZENS, IDC_SIZEWE, IDC_SIZEALL, IDC_SIZENS,   IDC_SIZENS,  IDC_SIZEWE,
+        IDC_SIZEWE, IDC_SIZENWSE, IDC_SIZENESW, IDC_SIZENESW, IDC_SIZENWSE};
+    return LoadCursorW(NULL, near_pan[c - BK_CURSOR_SCROLL_NS]);
   }
   LPCWSTR id = IDC_ARROW;
   switch (c) {

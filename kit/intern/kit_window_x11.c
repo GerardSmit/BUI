@@ -300,7 +300,10 @@ static void host_set_cursor(void *data, int c)
           XC_left_ptr,     XC_sb_h_double_arrow,  XC_sb_v_double_arrow,   XC_xterm,
           XC_crosshair,    XC_hand2,              XC_fleur,               XC_left_ptr,
           XC_bottom_left_corner, XC_bottom_right_corner, XC_X_cursor,     XC_watch,
-          XC_watch,        XC_sb_v_double_arrow,  XC_sb_up_arrow,         XC_sb_down_arrow};
+          XC_watch,
+          XC_sb_v_double_arrow, XC_sb_h_double_arrow, XC_fleur,
+          XC_sb_up_arrow,  XC_sb_down_arrow,      XC_sb_left_arrow,       XC_sb_right_arrow,
+          XC_top_left_corner, XC_top_right_corner, XC_bottom_left_corner, XC_bottom_right_corner};
       win->cursors[c] = XCreateFontCursor(g_dpy, shapes[c]);
     }
   }

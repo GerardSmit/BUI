@@ -57,6 +57,7 @@ pub(crate) struct Listeners {
     pub mouse_move: Vec<Listener<MouseMoveEvent>>,
     pub hover: Vec<Listener<bool>>,
     pub scroll: Vec<Listener<ScrollWheelEvent>>,
+    pub autoscroll: Vec<Listener<AutoscrollEvent>>,
     pub key_down: Vec<Listener<KeyDownEvent>>,
     pub key_up: Vec<Listener<KeyUpEvent>>,
     pub change: Vec<Listener<ChangeEvent>>,
@@ -347,6 +348,11 @@ impl Div {
     pub fn on_scroll_wheel(mut self,
                            f: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static) -> Self {
         self.listeners_mut().scroll.push(Box::new(f));
+        self
+    }
+    /// A middle-button autoscroll starts over the element ([`crate::autoscroll`]).
+    pub fn on_autoscroll(mut self, f: impl Fn(&AutoscrollEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.listeners_mut().autoscroll.push(Box::new(f));
         self
     }
     pub fn on_key_down(mut self, f: impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static) -> Self {

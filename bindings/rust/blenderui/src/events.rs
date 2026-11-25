@@ -124,6 +124,13 @@ impl ClickEvent {
     }
 }
 
+/// A middle-button autoscroll starting at `position` over the element
+/// ([`crate::autoscroll`]): it may add sideways ([`crate::Window::autoscroll_sideways`]).
+#[derive(Clone, Debug)]
+pub struct AutoscrollEvent {
+    pub position: Point<Pixels>,
+}
+
 #[derive(Clone, Debug)]
 pub struct ScrollWheelEvent {
     pub position: Point<Pixels>,

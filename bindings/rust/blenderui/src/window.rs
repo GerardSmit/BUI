@@ -2178,7 +2178,7 @@ impl Window {
                 if self.navigate(app, button, x, y, modifiers, true) {
                     return;
                 }
-                if button == MouseButton::Middle && self.start_autoscroll(x, y) {
+                if button == MouseButton::Middle && self.start_autoscroll(app, x, y) {
                     return;
                 }
                 if button == MouseButton::Left && self.grab_bar(y) {
@@ -2354,7 +2354,7 @@ impl Window {
     fn refresh_cursor(&mut self, path: &[Key]) {
         let Some(f) = &self.frame else { return };
         let cursor = if let Some(a) = &self.autoscroll {
-            a.anchor(self.pointer).heading.cursor()
+            a.anchor(self.pointer).cursor()
         } else {
             path.iter().rev()
                 .find_map(|k| f.by_key().get(k).and_then(|&i| self.caches.styles[f.nodes[i].style].cursor)).unwrap_or(0)
@@ -2366,8 +2366,10 @@ impl Window {
     }
 
     /// A middle press at (x, y): an autoscroll starts if something under it scrolls (a scroll
-    /// container that overflows, or an element that hears the wheel). Whether it started.
-    fn start_autoscroll(&mut self, x: f32, y: f32) -> bool {
+    /// container that overflows, or an element that hears the wheel: up and down). Its
+    /// `on_autoscroll` listeners then hear it, and may add sideways
+    /// ([`Window::autoscroll_sideways`]). Whether it started.
+    fn start_autoscroll(&mut self, app: &mut App, x: f32, y: f32) -> bool {
         let path = self.path_at(x, y);
         let Some(f) = &self.frame else { return false };
         // an element that hears the middle button's press itself (a pan) takes it instead
@@ -2378,15 +2380,22 @@ impl Window {
         if claimed {
             return false;
         }
-        let scrolls = path.iter().any(|k| f.by_key().get(k).is_some_and(|&i| {
+        let mut axes = crate::autoscroll::Axes::default();
+        for &i in path.iter().filter_map(|k| f.by_key().get(k)) {
             let (rx, ry) = f.nodes[i].scroll_range;
-            rx > 0.0 || ry > 0.0 || f.el(i).and_then(|e| e.listeners.as_deref()).is_some_and(|l| !l.scroll.is_empty())
-        }));
-        if !scrolls {
+            let hears_wheel = f.el(i).and_then(|e| e.listeners.as_deref()).is_some_and(|l| !l.scroll.is_empty());
+            axes.x |= rx > 0.0;
+            axes.y |= ry > 0.0 || hears_wheel;
+        }
+        if axes == crate::autoscroll::Axes::default() {
             return false;
         }
         self.hush_tooltip();
-        self.autoscroll = Some(crate::autoscroll::Autoscroll::new((x, y), path.clone()));
+        self.autoscroll = Some(crate::autoscroll::Autoscroll::new((x, y), path.clone(), axes));
+        if let Some(&deepest) = path.last() {
+            let e = AutoscrollEvent { position: point(px(x), px(y)) };
+            self.emit(app, deepest, &e, |l| l.autoscroll.iter().collect());
+        }
         // SAFETY: the window's live context and canvas.
         unsafe { sys::BK_capture_pointer(self.ctx, self.canvas) };
         self.refresh_cursor(&path);
@@ -2429,8 +2438,17 @@ impl Window {
         self.cursor
     }
 
-    /// A list scrolled for an input (a virtual list's wheel): an autoscroll step checks it.
-    pub(crate) fn note_scrolled(&mut self) {
+    /// From an `on_autoscroll` listener: the autoscroll starting under it scrolls sideways too
+    /// (what is under the anchor takes Shift+wheel sideways).
+    pub fn autoscroll_sideways(&mut self) {
+        if let Some(a) = &mut self.autoscroll {
+            a.axes.x = true;
+        }
+    }
+
+    /// Something scrolled for an input (a wheel listener that moved its content itself): an
+    /// autoscroll step checks it, and stays still once nothing moves.
+    pub fn note_scrolled(&mut self) {
         self.scrolled = true;
     }
 
@@ -2441,21 +2459,26 @@ impl Window {
     fn step_autoscroll(&mut self, app: &mut App) -> bool {
         let (now, pointer) = (self.clock.now(), self.pointer);
         let Some(a) = &mut self.autoscroll else { return false };
-        let Some(dy) = a.step(now, pointer) else { return false };
-        if dy == 0.0 {
+        let Some((dx, dy)) = a.step(now, pointer) else { return false };
+        if (dx, dy) == (0.0, 0.0) {
             return true;
         }
         let (origin, path) = (a.origin, a.path.clone());
         self.scrolled = false;
-        let e = ScrollWheelEvent {
-            position: point(px(origin.0), px(origin.1)),
-            delta: -dy / crate::vlist::element::WHEEL_NOTCH_PX as f32,
-            modifiers: Modifiers::default(),
-        };
-        if let Some(&deepest) = path.last() {
-            self.emit(app, deepest, &e, |l| l.scroll.iter().collect());
+        for (d, sideways) in [(dy, false), (dx, true)] {
+            if d == 0.0 {
+                continue;
+            }
+            let e = ScrollWheelEvent {
+                position: point(px(origin.0), px(origin.1)),
+                delta: -d / crate::vlist::element::WHEEL_NOTCH_PX as f32,
+                modifiers: Modifiers { shift: sideways, ..Modifiers::default() },
+            };
+            if let Some(&deepest) = path.last() {
+                self.emit(app, deepest, &e, |l| l.scroll.iter().collect());
+            }
+            self.scroll_along(&path, d, sideways);
         }
-        self.scroll_by(&path, dy, false);
         if !self.scrolled {
             if let Some(a) = &mut self.autoscroll {
                 a.last = None;
@@ -2465,15 +2488,25 @@ impl Window {
         true
     }
 
-    /// Scroll the innermost scroll container along `path` that can move.
+    /// Scroll the innermost scroll container along `path` that can move (a wheel: one that only
+    /// scrolls sideways takes it sideways).
     fn scroll_by(&mut self, path: &[Key], dy: f32, horizontal: bool) {
+        self.scroll_on(path, dy, horizontal, true);
+    }
+
+    /// Scroll the innermost scroll container along `path` that can move along that axis.
+    fn scroll_along(&mut self, path: &[Key], d: f32, horizontal: bool) {
+        self.scroll_on(path, d, horizontal, false);
+    }
+
+    fn scroll_on(&mut self, path: &[Key], dy: f32, horizontal: bool, sideways_when_flat: bool) {
         let Some(f) = &self.frame else { return };
         for key in path.iter().rev() {
             let Some(&i) = f.by_key().get(key) else { continue };
             let n = &f.nodes[i];
             let (rx, ry) = n.scroll_range;
-            let (sx, sy) = n.scroll_pos;
-            let (nx, ny) = if horizontal || ry <= 0.0 {
+            let (sx, sy) = self.state.scroll.get(key).copied().unwrap_or(n.scroll_pos);
+            let (nx, ny) = if horizontal || (sideways_when_flat && ry <= 0.0) {
                 ((sx + dy).clamp(0.0, rx), sy)
             } else {
                 (sx, (sy + dy).clamp(0.0, ry))

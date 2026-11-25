@@ -99,9 +99,20 @@ enum {
   BK_CURSOR_NOT_ALLOWED,
   BK_CURSOR_WAIT,
   BK_CURSOR_PROGRESS,  /* busy in the background, still interactive */
-  BK_CURSOR_SCROLL_NS,   /* autoscroll anchored, still: it scrolls either way */
-  BK_CURSOR_SCROLL_UP,   /* autoscroll moving up */
-  BK_CURSOR_SCROLL_DOWN, /* autoscroll moving down */
+  /* Autoscroll (middle-button pan), the system's own pan cursors, in the order of
+   * Windows' resource ids 32652..32662: still with up/down, left/right or every way,
+   * then moving toward each compass point. */
+  BK_CURSOR_SCROLL_NS,
+  BK_CURSOR_SCROLL_WE,
+  BK_CURSOR_SCROLL_ALL,
+  BK_CURSOR_SCROLL_N,
+  BK_CURSOR_SCROLL_S,
+  BK_CURSOR_SCROLL_W,
+  BK_CURSOR_SCROLL_E,
+  BK_CURSOR_SCROLL_NW,
+  BK_CURSOR_SCROLL_NE,
+  BK_CURSOR_SCROLL_SW,
+  BK_CURSOR_SCROLL_SE,
   BK_CURSOR_COUNT,
 };
 

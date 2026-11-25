@@ -674,6 +674,95 @@ fn a_middle_drag_autoscrolls_a_scroll_container_and_not_plain_space() {
     });
 }
 
+/// Three boxes: one overflowing both ways, one only sideways, and one that hears the wheel
+/// (noting each scroll's delta and Shift) and says on an autoscroll that it scrolls sideways.
+struct Ways {
+    heard: std::rc::Rc<std::cell::RefCell<Vec<(f32, bool)>>>,
+}
+
+impl Render for Ways {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let heard = self.heard.clone();
+        body().m_0().flex().flex_row().bg(rgb(0x000000))
+            .child(div().id("both").w(px(100.0)).h(px(100.0)).overflow_scroll()
+                .child(div().w(px(400.0)).h(px(400.0))))
+            .child(div().id("sideways").w(px(100.0)).h(px(100.0)).overflow_x_scroll().overflow_y_hidden()
+                .child(div().w(px(400.0)).h(px(100.0))))
+            .child(div().id("listener").w(px(100.0)).h(px(100.0))
+                .on_scroll_wheel(move |e, _, _| heard.borrow_mut().push((e.delta, e.modifiers.shift)))
+                .on_autoscroll(|_, w, _| w.autoscroll_sideways()))
+    }
+}
+
+#[test]
+fn autoscroll_goes_sideways_where_something_scrolls_sideways_with_the_pan_cursor_for_each_way() {
+    use blenderui::autoscroll::{cursor, Axes, Heading};
+    Application::headless().run(|cx| {
+        let heard = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let win = open(cx, 300.0, 100.0, Ways { heard: heard.clone() });
+        let id = win.id;
+        cx.draw(id);
+        let frames = |cx: &mut App| {
+            for _ in 0..6 {
+                cx.advance_clock(std::time::Duration::from_millis(16));
+                cx.draw(id);
+            }
+        };
+        let shown = |cx: &App| {
+            let w = cx.window(id).unwrap();
+            (w.autoscroll().map(|a| (a.axes, a.heading)), w.cursor_shape())
+        };
+        let both = Axes { x: true, y: true };
+        let ways = [
+            ((0.0, -40.0), Heading::N, cursor::N),
+            ((40.0, -40.0), Heading::NE, cursor::NE),
+            ((40.0, 0.0), Heading::E, cursor::E),
+            ((40.0, 40.0), Heading::SE, cursor::SE),
+            ((0.0, 40.0), Heading::S, cursor::S),
+            ((-40.0, 40.0), Heading::SW, cursor::SW),
+            ((-40.0, 0.0), Heading::W, cursor::W),
+            ((-40.0, -40.0), Heading::NW, cursor::NW),
+        ];
+        let (ax, ay) = (50.0, 50.0);
+        cx.simulate_middle(id, ax, ay, true);
+        assert_eq!(shown(cx), (Some((both, Heading::Still)), cursor::ALL), "a box overflowing both ways: every way");
+        for ((dx, dy), heading, c) in ways {
+            cx.simulate_mouse_move(id, ax + dx, ay + dy);
+            assert_eq!(shown(cx), (Some((both, heading)), c), "{heading:?}");
+        }
+        cx.simulate_mouse_move(id, ax + 45.0, ay + 45.0);
+        frames(cx);
+        let (x, y) = cx.window(id).unwrap().scroll_offset("both");
+        assert!(x > 0.0 && y > 0.0, "south-east scrolls right and down: {x} {y}");
+        cx.simulate_middle(id, ax + 45.0, ay + 45.0, false);
+        assert_eq!(shown(cx).0, None);
+        assert!(shown(cx).1 < cursor::NS, "the usual cursor after");
+
+        let sideways = Axes { x: true, y: false };
+        cx.simulate_middle(id, 150.0, ay, true);
+        assert_eq!(shown(cx), (Some((sideways, Heading::Still)), cursor::WE), "a box that only scrolls sideways");
+        cx.simulate_mouse_move(id, 150.0, ay + 40.0);
+        assert_eq!(shown(cx), (Some((sideways, Heading::Still)), cursor::WE), "up and down mean nothing there");
+        cx.simulate_mouse_move(id, 190.0, ay + 40.0);
+        assert_eq!(shown(cx), (Some((sideways, Heading::E)), cursor::E));
+        frames(cx);
+        assert!(cx.window(id).unwrap().scroll_offset("sideways").0 > 0.0, "it scrolls right");
+        cx.simulate_mouse_move(id, 110.0, ay);
+        assert_eq!(shown(cx), (Some((sideways, Heading::W)), cursor::W));
+        cx.simulate_middle(id, 110.0, ay, false);
+
+        cx.simulate_middle(id, 250.0, ay, true);
+        assert_eq!(shown(cx), (Some((both, Heading::Still)), cursor::ALL), "a listener said it scrolls sideways");
+        cx.simulate_mouse_move(id, 290.0, ay);
+        frames(cx);
+        let sideways_heard = heard.borrow().iter().filter(|(_, shift)| *shift).map(|(d, _)| *d).collect::<Vec<_>>();
+        assert!(!sideways_heard.is_empty() && sideways_heard.iter().all(|d| *d <= 0.0), "rightward steps come as Shift+wheel: {sideways_heard:?}");
+        assert!(heard.borrow().iter().all(|(_, shift)| *shift), "no up or down steps while moving straight right");
+        cx.simulate_middle(id, 290.0, ay, false);
+        assert_eq!(shown(cx).0, None);
+    });
+}
+
 /// A box that hears the wheel and the middle button's press itself (a pan), noting the presses.
 struct Panner {
     downs: std::rc::Rc<std::cell::Cell<usize>>,
